@@ -1,0 +1,23 @@
+# Keeps the free Supabase project from pausing: one tiny database read every day.
+# Reads the address and public key straight from config.js, so nothing to fill in here.
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # every day at 06:17 UTC
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ping the database
+        run: |
+          URL=$(grep -oP 'SUPABASE_URL:\s*"\K[^"]+' config.js | sed 's#/*$##')
+          KEY=$(grep -oP 'SUPABASE_ANON_KEY:\s*"\K[^"]+' config.js)
+          echo "Pinging $URL"
+          curl -fsS "$URL/rest/v1/projects?select=id&limit=1" -H "apikey: $KEY"
+          echo
+          echo "OK, Supabase is awake."
