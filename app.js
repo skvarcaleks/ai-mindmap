@@ -68,7 +68,14 @@ function sizeSky() {
   stars = Array.from({ length: n }, () => ({ x: Math.random() * W, y: Math.random() * H, z: Math.random(), r: Math.random() < .06 ? 1.6 : Math.random() * .9 + .3, p: Math.random() * 6.28, s: .4 + Math.random() * 1.6, h: Math.random() < .12 ? '#ffd9a8' : Math.random() < .12 ? '#bfe9ff' : '#e6e9f5' }));
 }
 addEventListener('resize', sizeSky); sizeSky();
-addEventListener('pointermove', e => { mouse.x = e.clientX; mouse.y = e.clientY; const sl = $('#slCoord'); if (sl) sl.textContent = radec(e.clientX, e.clientY, W, H); });
+// crosshair, parallax and sky coordinates follow a real mouse only (not taps on a touch screen)
+addEventListener('pointermove', e => {
+  if (e.pointerType !== 'mouse') { mouse.x = mouse.y = -999; return; }
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  const sl = $('#slCoord'); if (sl) sl.textContent = radec(e.clientX, e.clientY, W, H);
+});
+addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') mouse.x = mouse.y = -999; });
+if (matchMedia('(hover: none)').matches) { const ch = document.getElementById('chartHelp'); if (ch) ch.textContent = 'tapni zvezdo za vnos'; }
 function meteor() { meteors.push({ x: W * (.3 + Math.random() * .7), y: Math.random() * H * .35, vx: -7 - Math.random() * 4, vy: 3 + Math.random() * 2.5, l: 1 }); }
 function drawSky(ts) {
   const t = ts / 1000; sx.clearRect(0, 0, W, H);
@@ -144,6 +151,9 @@ function renderProjects() {
     li.querySelector('button').onclick = () => selectProject(p.id);
     ul.append(li);
   });
+  const sel = $('#projSelect');
+  sel.innerHTML = projects.length ? projects.map(p => `<option value="${p.id}"${p.id === cur ? ' selected' : ''}>${esc(p.name)} · ${p.count}★</option>`).join('') : '<option value="">ni projektov</option>';
+  sel.disabled = !projects.length;
   $('#addProj').hidden = !(me.can_create || me.is_admin) || $('#newProj').classList.contains('on');
   $('#adminBtn').hidden = !me.is_admin;
   $('#whoami').textContent = me.username;
@@ -157,6 +167,8 @@ async function selectProject(id) {
   try { await loadEntries(); } catch (e) { fail('nalaganje vnosov', e); }
   renderAll();
 }
+
+$('#projSelect').addEventListener('change', e => { if (e.target.value) selectProject(e.target.value); });
 
 /* ---------------- render: kinds ---------------- */
 function seg(box, list, isOn, onPick) {

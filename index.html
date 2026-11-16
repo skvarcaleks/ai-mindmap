@@ -231,7 +231,37 @@ main{grid-row:1;min-width:0;min-height:0;overflow:auto;padding-block:22px 40px;p
   .entry .acts{opacity:1}
   .bar .k{display:none}
   .bar .save{flex:1 1 100%}
+  /* phone: compact header instead of the long sidebar */
+  .brand{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .brand h1{font-size:22px}
+  .brand h1 br{display:none}
+  .brand .tag,.cat-h,#projects{display:none}
+  aside .projpick{display:flex}
+  .prompt{flex-direction:column;gap:2px}
+  .prompt .ps{font-size:12px}
+  /* entry box right under the title, before the star chart */
+  .wrap>.head{order:-3}
+  .wrap>.howto{order:-2}
+  .wrap>.composer{order:-1}
+  .newp{margin:6px 0 0}
+  .usercard{grid-template-columns:1fr auto;display:grid;align-items:center;margin-top:8px;padding:8px 0}
+  .usercard .acts .lbl-txt{display:none}
+  .usercard .acts .btn{min-height:34px;padding:0 9px}
 }
+/* iPhone/iPad zoom in on fields below 16px; keep them at 16px on touch screens */
+@media (max-width:760px),(pointer:coarse){
+  input,textarea,select,.composer textarea,.search input,.pwrow input,.adduser input,.newproj input,.row input{font-size:16px!important}
+}
+/* touch screens: hide the mouse-only sky coordinates */
+@media (hover:none){
+  #slCoord{visibility:hidden}
+  .chart .help::after{content:""}
+}
+.projpick{display:none;align-items:center;gap:8px;margin-top:12px;border:1px solid var(--amber);background:rgba(255,180,84,.06);padding:0 10px;position:relative}
+.projpick svg.i{color:var(--amber)}
+.projpick select{flex:1;min-width:0;appearance:none;-webkit-appearance:none;background:transparent;border:0;color:var(--amber);font-family:var(--f-mono);padding:10px 22px 10px 0;outline:none}
+.projpick::after{content:"▾";position:absolute;right:12px;color:var(--amber);pointer-events:none}
+.projpick select option{background:var(--ink);color:var(--star)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .loading{color:var(--dim);padding:24px 0}
 a.fileline{text-decoration:none}
@@ -318,9 +348,10 @@ a.fileline:hover{border-color:var(--violet)}
 <section id="app" hidden>
   <aside>
     <div class="brand">
-      <h1>Aleks's <span>AI</span><br>mindmap</h1>
+      <h1>Aleks's <span>AI</span> <br>mindmap</h1>
       <div class="tag">// a context drop-off, under the stars</div>
     </div>
+    <label class="projpick" for="projSelect"><svg class="i"><use href="#i-export"/></svg><select id="projSelect" aria-label="Izberi projekt"></select></label>
     <div class="cat-h">PROJEKTI</div>
     <ul id="projects"></ul>
     <button class="btn newp" id="addProj" type="button"><svg class="i"><use href="#i-plus"/></svg>Nov projekt</button>
@@ -328,9 +359,9 @@ a.fileline:hover{border-color:var(--violet)}
     <div class="usercard">
       <div class="who"><svg class="i"><use href="#i-user"/></svg><b id="whoami">aleks</b><span class="badge" id="roleBadge">admin</span></div>
       <div class="acts">
-        <button class="btn sm" id="adminBtn" type="button"><svg class="i"><use href="#i-users"/></svg>Uporabniki</button>
-        <button class="btn sm" id="myPwBtn" type="button"><svg class="i"><use href="#i-key"/></svg>Geslo</button>
-        <button class="btn sm" id="logout" type="button"><svg class="i"><use href="#i-out"/></svg>Odjava</button>
+        <button class="btn sm" id="adminBtn" type="button" aria-label="Uporabniki"><svg class="i"><use href="#i-users"/></svg><span class="lbl-txt">Uporabniki</span></button>
+        <button class="btn sm" id="myPwBtn" type="button" aria-label="Geslo"><svg class="i"><use href="#i-key"/></svg><span class="lbl-txt">Geslo</span></button>
+        <button class="btn sm" id="logout" type="button" aria-label="Odjava"><svg class="i"><use href="#i-out"/></svg><span class="lbl-txt">Odjava</span></button>
       </div>
     </div>
   </aside>
@@ -356,7 +387,7 @@ a.fileline:hover{border-color:var(--violet)}
       <div class="box howto" id="howto" hidden>
         <div class="lbl">kako deluje</div>
         <ol>
-          <li><span>1</span><div><b>Izberi projekt</b> levo. Vsak projekt ima svoje zapiske.</div></li>
+          <li><span>1</span><div><b>Izberi projekt</b> v seznamu projektov. Vsak ima svoje zapiske.</div></li>
           <li><span>2</span><div><b>Zapiši ali narekuj</b> misel, izberi vrsto in pripni datoteke.</div></li>
           <li><span>3</span><div><b>Pritisni Shrani.</b> Vnos se pojavi v dnevniku in kot zvezda na karti.</div></li>
           <li><span>4</span><div><b>Kontekst za umetno inteligenco</b> zgoraj desno izvozi vse zapiske projekta naenkrat.</div></li>
@@ -366,7 +397,7 @@ a.fileline:hover{border-color:var(--violet)}
 
       <div class="box chart">
         <div class="lbl" id="chartLbl">star chart</div>
-        <div class="help">klik na zvezdo odpre vnos</div>
+        <div class="help" id="chartHelp">klik na zvezdo odpre vnos</div>
         <div class="frame">
           <canvas id="constel" aria-label="Vnosi projekta kot ozvezdje. Klik na zvezdo odpre vnos."></canvas>
           <div class="ticks-y" id="ticksY"></div>
