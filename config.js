@@ -4,7 +4,7 @@
 // NIKOLI ne vpiši sem ključa "service_role" / "secret".
 
 window.MINDMAP_CONFIG = {
-    SUPABASE_URL: "https://xpwhpzfmlklspjmmvbaq.supabase.co/rest/v1/",
+    SUPABASE_URL: "https://xpwhpzfmlklspjmmvbaq.supabase.co",
     SUPABASE_ANON_KEY: "sb_publishable_uPDbKeXE8h8TBZjmZK4Fhg_ADooiCC7",
 
   // Uporabniška imena se v ozadju pretvorijo v e-naslov ime@USER_DOMAIN.
