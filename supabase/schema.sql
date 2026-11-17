@@ -44,10 +44,10 @@ create table if not exists public.entries (
   edited_at   timestamptz
 );
 create index if not exists entries_project_idx on public.entries(project_id, created_at);
--- entry kinds (skill and prompt hold AI instructions)
+-- entry kinds (skill and prompt hold AI instructions, sestanek holds a meeting)
 alter table public.entries drop constraint if exists entries_kind_check;
 alter table public.entries add constraint entries_kind_check
-  check (kind in ('misel','odlocitev','todo','povezava','datoteka','skill','prompt'));
+  check (kind in ('misel','odlocitev','todo','povezava','datoteka','skill','prompt','sestanek'));
 
 -- work / personal space for each project
 alter table public.projects add column if not exists space text not null default 'osebno';
@@ -295,6 +295,19 @@ alter table public.entries add column if not exists skill_name text;
 alter table public.entries add column if not exists version integer;
 alter table public.entries add column if not exists superseded_by uuid references public.entries(id) on delete set null;
 create index if not exists entries_skill_idx on public.entries(project_id, skill_name) where skill_name is not null;
+-- meetings: text holds the minutes (what AI reads), transcript holds the full transcript
+alter table public.entries add column if not exists title text;
+alter table public.entries add column if not exists meeting_at timestamptz;
+alter table public.entries add column if not exists participants text[] not null default '{}';
+alter table public.entries add column if not exists transcript text;
+alter table public.entries add column if not exists transcript_private boolean not null default false;  -- true: read links get only the minutes
+alter table public.entries add column if not exists parent_id uuid references public.entries(id) on delete set null;  -- decisions/to-dos taken from a meeting
+alter table public.entries add column if not exists transcript_words integer generated always as (
+  case when transcript is null or btrim(transcript) = '' then 0
+       else coalesce(array_length(regexp_split_to_array(btrim(transcript), '\s+'), 1), 0) end) stored;
+create index if not exists entries_parent_idx on public.entries(parent_id) where parent_id is not null;
+alter table public.entries drop constraint if exists entries_transcript_len;
+alter table public.entries add constraint entries_transcript_len check (transcript is null or length(transcript) <= 400000);
 create policy "agents seen in my projects" on public.agents for select to authenticated
   using (exists (select 1 from public.entries e where e.agent_id = agents.id and public.can_access(e.project_id)));
 
@@ -361,6 +374,26 @@ begin
 end $$;
 revoke all on function public.add_entry_as(text, uuid, text, text, text) from public, anon, authenticated;
 
+-- direct (connector) writes of a meeting:
+-- select add_meeting_as('claude', '<project id>', 'naslov', 'zapisnik', 'transkript', '2026-11-17 10:00+01', array['Aleks','Julija']);
+create or replace function public.add_meeting_as(p_agent text, p_project uuid, p_title text, p_summary text,
+  p_transcript text default null, p_at timestamptz default now(), p_participants text[] default '{}')
+returns uuid language plpgsql security definer set search_path = public as $$
+declare a public.agents; sp text; new_id uuid;
+begin
+  select * into a from public.agents where name = lower(p_agent);
+  if a.id is null then raise exception 'Agent % ne obstaja.', p_agent; end if;
+  if a.disabled then raise exception 'Agent % je onemogočen.', p_agent; end if;
+  select space into sp from public.projects where id = p_project;
+  if sp is null then raise exception 'Projekt ne obstaja.'; end if;
+  if sp <> a.space then raise exception 'Projekt ni v prostoru agenta %.', p_agent; end if;
+  insert into public.entries (project_id, kind, text, title, meeting_at, participants, transcript, author, author_name, agent_id, source)
+  values (p_project, 'sestanek', coalesce(p_summary, ''), left(p_title, 140), coalesce(p_at, now()), coalesce(p_participants, '{}'),
+          nullif(btrim(coalesce(p_transcript, '')), ''), null, a.name, a.id, 'agent') returning id into new_id;
+  return new_id;
+end $$;
+revoke all on function public.add_meeting_as(text, uuid, text, text, text, timestamptz, text[]) from public, anon, authenticated;
+
 -- approve a skill/prompt; a named one replaces the earlier versions from the same author (they stay as history)
 create or replace function public.approve_entry(eid uuid) returns integer
 language plpgsql security definer set search_path = public as $$
@@ -409,7 +442,12 @@ select p.name                                   as project,
        (e.agent_id is not null)                 as is_agent,
        e.review,
        e.skill_name,
-       e.version
+       e.version,
+       e.title,
+       e.meeting_at,
+       e.participants,
+       e.transcript_words,
+       e.parent_id
 from public.entries e
 join public.projects p on p.id = e.project_id
 where e.superseded_by is null and not e.review

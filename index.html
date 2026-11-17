@@ -357,6 +357,25 @@ li.grp:first-child{border-top:0;padding-top:4px}
 .vers[open] summary::before{transform:rotate(90deg)}
 .vers .ver{margin-top:8px;padding:8px 10px;border-left:1px dashed color-mix(in srgb,var(--c) 45%,transparent);opacity:.8}
 .vers .vmeta{color:var(--dim);font-size:11px;margin-bottom:4px}
+/* meetings */
+.mtitle{font-size:15px;color:var(--star);margin-top:2px;overflow-wrap:anywhere}
+.mline{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11.5px;color:var(--dim);margin-top:3px}
+.mline span{display:inline-flex;align-items:center;gap:5px;min-width:0;overflow-wrap:anywhere}
+.mline .i{width:13px;height:13px}
+.nomin{margin-top:8px;font-size:12.5px;color:var(--dim);border-left:2px dashed var(--c);padding:2px 0 2px 12px}
+.trbox{margin-top:8px;max-height:420px;overflow:auto;border:1px dashed var(--rule2);padding:10px 12px;background:rgba(3,4,10,.5)}
+.trbox pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;color:#cdd2ea}
+.entry .meta .from{font-size:11px;color:var(--c);padding:0 4px;border:1px dashed color-mix(in srgb,var(--c) 45%,transparent)}
+.entry .meta .trhit{color:var(--cyan);font-size:11px}
+.mform{display:grid;gap:12px;align-content:start}
+.mform .two{display:flex;gap:8px;flex-wrap:wrap}
+.mform input:not([type=checkbox]),.mform textarea{flex:1;min-width:150px;width:100%;background:var(--void);border:1px solid var(--rule2);outline:none;padding:8px 9px;font-size:13px;caret-color:var(--amber);color:var(--star);font-family:var(--f-mono)}
+.mform .two input{width:auto}
+.mform input[type=datetime-local]{flex:0 1 210px;min-width:0;color-scheme:dark}
+.mform textarea{resize:vertical;line-height:1.55;min-height:120px}
+.mform input:focus,.mform textarea:focus{border-color:var(--amber)}
+.mform .row2{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+#meetForm.over .mform{outline:1px dashed var(--amber);outline-offset:-6px}
 .hidedone{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);cursor:pointer;min-height:28px}
 .hidedone input{accent-color:var(--amber)}
 a.fileline{text-decoration:none}
@@ -519,7 +538,7 @@ a.fileline:hover{border-color:var(--violet)}
         <div>
           <button class="dropzone" type="button" id="dropzone">
             <svg class="i"><use href="#i-upload"/></svg>
-            <span>Povleci datoteke sem ali <b>izberi datoteke</b><small>slike, PDF, dokumenti · do 8 MB · .md in .txt se uvozita kot besedilo</small></span>
+            <span>Povleci datoteke sem ali <b>izberi datoteke</b><small>slike, PDF, dokumenti · do 8 MB · .md in .txt se uvozita kot besedilo · .vtt in .srt odpreta sestanek</small></span>
           </button>
           <input type="file" id="file" multiple hidden>
         </div>
@@ -563,6 +582,36 @@ a.fileline:hover{border-color:var(--violet)}
     <div class="sb"><pre id="ctxPre"></pre></div>
     <div class="foot"><span>Kopiraj in prilepi v pogovor z umetno inteligenco. Povezave do datotek veljajo 7 dni.</span><button class="btn primary" id="ctxCopy" type="button"><svg class="i"><use href="#i-copy"/></svg>Kopiraj</button></div>
   </div>
+</div>
+
+<!-- meeting sheet -->
+<div class="overlay" id="meetSheet" hidden>
+  <form class="sheet box" id="meetForm" role="dialog" aria-modal="true" aria-labelledby="meetH" autocomplete="off">
+    <div class="sh"><h3 id="meetH">Nov sestanek</h3><button class="ghost" data-close type="button"><svg class="i"><use href="#i-x"/></svg>Zapri</button></div>
+    <div class="sb mform">
+      <div class="two"><input id="mTitle" placeholder="naslov, npr. Tedenski sestanek ekipe" maxlength="140" aria-label="Naslov sestanka"><input type="datetime-local" id="mAt" aria-label="Datum in ura"></div>
+      <input id="mWho" placeholder="udeleženci, ločeni z vejico (neobvezno)" aria-label="Udeleženci">
+      <div>
+        <div class="field-l">TRANSKRIPT <span id="mWords"></span></div>
+        <textarea id="mTr" rows="7" placeholder="Prilepi transkript ali povleci sem datoteko: .vtt (Teams, Zoom), .srt, .txt ali .docx (Google Meet, Teams)…"></textarea>
+        <div class="row2">
+          <button class="btn sm" type="button" id="mFileBtn"><svg class="i"><use href="#i-upload"/></svg>Uvozi datoteko</button>
+          <input type="file" id="mFile" accept=".vtt,.srt,.txt,.md,.docx" hidden>
+          <button class="btn sm" type="button" id="mPromptBtn" disabled><svg class="i"><use href="#i-copy"/></svg>Kopiraj prompt za zapisnik</button>
+        </div>
+      </div>
+      <div>
+        <div class="field-l">ZAPISNIK · to bere AI</div>
+        <textarea id="mSum" rows="7" placeholder="## Povzetek&#10;…&#10;&#10;## Odločitve&#10;- …&#10;&#10;## Naloge&#10;- [ ] kdo: kaj"></textarea>
+        <div class="row2"><button class="btn sm" type="button" id="mPasteSum"><svg class="i"><use href="#i-copy"/></svg>Prilepi odgovor iz AI</button></div>
+        <div class="hintline">Kopiraj prompt za zapisnik, prilepi ga v katerikoli AI, njegov odgovor pa prilepi sem. Zapisnik lahko napišeš tudi sam ali ga dodaš pozneje.</div>
+      </div>
+      <label class="checks" id="mSplitRow" hidden><input type="checkbox" id="mSplit" checked><span>Dodaj <span id="mSplitN"></span> iz zapisnika kot ločene vnose</span></label>
+      <label class="checks"><input type="checkbox" id="mPriv">Celoten transkript samo v aplikaciji (AI povezave vidijo le zapisnik)</label>
+      <div class="err" id="mErr"></div>
+    </div>
+    <div class="foot"><span id="mStatus" role="status"></span><button class="btn primary" type="submit" id="mSave" disabled><svg class="i"><use href="#i-send"/></svg><span id="mSaveLbl">Shrani sestanek</span></button></div>
+  </form>
 </div>
 
 <!-- agents & links sheet -->

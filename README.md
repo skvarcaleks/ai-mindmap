@@ -112,6 +112,17 @@ This uses a second Edge Function, `context` (`supabase/functions/context/index.t
 
 Tick the box next to a to-do to mark it done (anyone with access to the project can). **skrij opravljene** hides finished ones. Exports show `[x]` / `[ ]`.
 
+## Meetings
+
+Entry type **sestanek** (meeting) opens its own form: title, date and time, participants, the **transcript** and the **zapisnik** (minutes).
+
+- **Transcript:** paste it, or import a file: `.vtt` (Teams, Zoom), `.srt`, `.txt` or `.docx` (Google Meet and Teams downloads). Captions are cleaned into `Name: text` paragraphs, and speakers become the participants. Dropping a `.vtt` or `.srt` into the normal composer opens the meeting form too. Up to 400,000 characters (a 3–4 hour meeting).
+- **Minutes without an API:** **Kopiraj prompt za zapisnik** copies a ready prompt with the transcript. Paste it into any AI, then paste its answer back with **Prilepi odgovor iz AI**. You can also write the minutes yourself or add them later with Uredi.
+- **Decisions and to-dos:** if the minutes have `## Odločitve` and `## Naloge` sections, one tick adds each line as its own decision or to-do, linked to the meeting (↳ chip). The to-dos can be ticked off like any other.
+- **What AI reads:** the minutes. Read links list each meeting's minutes plus a separate link to its full transcript, which the AI opens only if it needs details. Tick **Celoten transkript samo v aplikaciji** for client calls or anything sensitive; then read links get the minutes only.
+- **Search** also looks inside transcripts (3+ letters) and marks those hits *zadetek v transkriptu*.
+- **Agents** can send meetings through a write link: `{"kind": "sestanek", "title": "...", "date": "2026-11-17T10:00", "participants": ["Ana"], "summary": "...", "transcript": "..."}`, or a `.vtt` / `.srt` / `.txt` file. Direct database writes: `select add_meeting_as('claude', '<project id>', 'title', 'minutes', 'transcript', now(), array['Ana']);`.
+
 ## Agents (AI tools) and their links
 
 Sidebar → project → **Agenti**.

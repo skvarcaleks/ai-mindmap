@@ -1,14 +1,15 @@
 // Aleks's AI mindmap – context
 // Read-only share links: GET .../functions/v1/context?t=<token>
 // Returns one project, or every project in one space, as plain Markdown an AI can read.
+// Meetings show their minutes; the full transcript is a separate request: ...?t=<token>&m=<meeting id>
 // Deploy with "Verify JWT" OFF (the secret token in the link is the access check).
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
 const LABEL: Record<string, string> = {
   odlocitev: "Odločitve", todo: "Za narediti", skill: "Skills (navodila za AI)", prompt: "Prompti",
-  misel: "Misli", povezava: "Povezave", datoteka: "Datoteke",
+  misel: "Misli", povezava: "Povezave", datoteka: "Datoteke", sestanek: "Sestanki",
 };
-const ORDER = ["odlocitev", "todo", "skill", "prompt", "misel", "povezava", "datoteka"];
+const ORDER = ["odlocitev", "todo", "sestanek", "skill", "prompt", "misel", "povezava", "datoteka"];
 const SPACE: Record<string, string> = { delo: "Delo", osebno: "Osebno" };
 
 const reply = (body: string, status = 200) =>
@@ -24,10 +25,13 @@ const reply = (body: string, status = 200) =>
 const day = (t: string) => t.slice(0, 16).replace("T", " ");
 const sha256 = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))).map((b) => b.toString(16).padStart(2, "0")).join("");
 
+// minutes use their own ## headings; nest them under the meeting's heading
+const nest = (t: string, by: number) => t.replace(/^(#{1,4})\s/gm, (_, h) => "#".repeat(Math.min(6, h.length + by)) + " ");
 const who = (e: any) => `@${e.author_name ?? "?"}${e.source === "agent" ? " (AI agent)" : e.via ? ` (prek ${e.via})` : ""}`;
 
 Deno.serve(async (req) => {
-  const token = new URL(req.url).searchParams.get("t") ?? "";
+  const qs = new URL(req.url).searchParams;
+  const token = qs.get("t") ?? "", meetingId = qs.get("m") ?? "";
   if (!/^[a-f0-9]{32,64}$/.test(token)) return reply("Ta povezava ni veljavna.", 404);
 
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -52,8 +56,23 @@ Deno.serve(async (req) => {
   const { data: projects } = await pq;
   const ids = (projects ?? []).map((p) => p.id);
 
+  // one meeting's full transcript, only inside this link's scope
+  if (meetingId) {
+    if (!/^[0-9a-f-]{36}$/.test(meetingId) || !ids.length) return reply("Tega sestanka ni.", 404);
+    const { data: m } = await db.from("entries").select("title,meeting_at,created_at,participants,text,transcript,transcript_private,review,superseded_by,project_id")
+      .eq("id", meetingId).eq("kind", "sestanek").in("project_id", ids).maybeSingle();
+    if (!m || m.review || m.superseded_by) return reply("Tega sestanka ni.", 404);
+    if (m.transcript_private) return reply("Celoten transkript tega sestanka ni deljen. Na voljo je samo zapisnik.", 403);
+    await db.from("share_links").update({ last_used_at: new Date().toISOString(), use_count: (link.use_count ?? 0) + 1 }).eq("id", link.id);
+    return reply([
+      `# ${m.title ?? "Sestanek"} · ${day(m.meeting_at ?? m.created_at)} UTC`,
+      m.participants?.length ? `Udeleženci: ${m.participants.join(", ")}` : "",
+      "", "## Zapisnik", "", nest(m.text || "_(zapisnika še ni)_", 1), "", "## Celoten transkript", "", m.transcript || "_(transkripta ni)_",
+    ].join("\n"));
+  }
+
   const { data: entries } = ids.length
-    ? await db.from("entries").select("project_id,kind,text,files,created_at,author_name,done_at,done_by,source,via,review,skill_name,version,superseded_by").in("project_id", ids).order("created_at")
+    ? await db.from("entries").select("project_id,kind,text,files,created_at,author_name,done_at,done_by,source,via,review,skill_name,version,superseded_by,id,title,meeting_at,participants,transcript_private,transcript_words,parent_id").in("project_id", ids).order("created_at")
     : { data: [] as any[] };
 
   // temporary download links for attachments (24 h)
@@ -64,11 +83,12 @@ Deno.serve(async (req) => {
     (signed ?? []).forEach((s: any) => { if (s.signedUrl) urls[s.path] = s.signedUrl; });
   }
 
+  const self = `${Deno.env.get("SUPABASE_URL")}/functions/v1/context?t=${token}`;
   const scope = link.project_id ? `projekt »${projects?.[0]?.name ?? "?"}«` : `vsi projekti v prostoru ${SPACE[link.space] ?? link.space}`;
   const out: string[] = [
     `# Kontekst iz Aleks's AI mindmap`,
     `> Samo za branje. Obseg: ${scope}. Izvoženo ${day(new Date().toISOString())} UTC.`,
-    `> Za AI: to je zbirka zapiskov, odločitev in navodil, ki jih uporabnik hrani za svoje delo. Uporabi jih kot kontekst.`,
+    `> Za AI: to je zbirka zapiskov, odločitev in navodil, ki jih uporabnik hrani za svoje delo. Uporabi jih kot kontekst. Pri sestankih je zapisnik; celoten transkript odpri samo, če potrebuješ podrobnosti.`,
     "",
   ];
   for (const p of projects ?? []) {
@@ -83,13 +103,20 @@ Deno.serve(async (req) => {
       out.push(`### ${LABEL[k]}`, "");
       for (const e of group) {
         const files = (e.files ?? []).map((f: any) => (urls[f.path] ? `[${f.name}](${urls[f.path]})` : f.name));
-        if (k === "skill" || k === "prompt") {
+        if (k === "sestanek") {
+          out.push(`#### ${e.title ?? "Sestanek"} · ${day(e.meeting_at ?? e.created_at)} · ${who(e)}`);
+          if (e.participants?.length) out.push(`Udeleženci: ${e.participants.join(", ")}`);
+          out.push("", nest(e.text || "_(zapisnika še ni)_", 4), "");
+          if (e.transcript_words && !e.transcript_private) out.push(`Celoten transkript (${e.transcript_words} besed): ${self}&m=${e.id}`, "");
+          else if (e.transcript_words) out.push("_(celoten transkript ni deljen)_", "");
+        } else if (k === "skill" || k === "prompt") {
           const title = e.skill_name ? `${e.skill_name}${e.version ? ` (v${e.version})` : ""} · ` : "";
           out.push(`#### ${title}${day(e.created_at)} · ${who(e)}`, "", e.text ?? "", "");
         } else {
           const box = k === "todo" ? (e.done_at ? "[x] " : "[ ] ") : "";
           const doneNote = e.done_at ? ` (opravljeno ${day(e.done_at)}${e.done_by ? " @" + e.done_by : ""})` : "";
-          out.push(`- ${box}[${day(e.created_at)} ${who(e)}] ${(e.text ?? "").replace(/\n+/g, " / ")}${doneNote}`);
+          const from = e.parent_id ? es.find((x: any) => x.id === e.parent_id) : null;
+          out.push(`- ${box}[${day(e.created_at)} ${who(e)}] ${(e.text ?? "").replace(/\n+/g, " / ")}${from ? ` (iz sestanka »${from.title ?? "sestanek"}«)` : ""}${doneNote}`);
         }
         if (files.length) out.push(`  - priponke: ${files.join(", ")}`);
       }

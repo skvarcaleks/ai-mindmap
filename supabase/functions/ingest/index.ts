@@ -3,6 +3,7 @@
 //   POST .../functions/v1/ingest?t=<key>
 //     JSON:      {"text": "...", "kind": "misel", "files": [{"name": "a.pdf", "type": "application/pdf", "data": "<base64>"}]}
 //                {"text": "...", "kind": "skill", "name": "blog-writer"}  same name again = new version
+//                {"kind": "sestanek", "title": "...", "date": "2026-11-17T10:00", "participants": ["Ana"], "summary": "...", "transcript": "..."}
 //     multipart: fields text, kind; one or more "file" parts
 //     plain text body also works (kind via &kind=...)
 //   GET  .../functions/v1/ingest?t=<key>   short instructions for the agent
@@ -12,9 +13,11 @@
 // Deploy with "Verify JWT" OFF (the secret key in the link is the access check).
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
-const KINDS = ["misel", "odlocitev", "todo", "povezava", "skill", "prompt", "datoteka"];
+const KINDS = ["misel", "odlocitev", "todo", "povezava", "skill", "prompt", "datoteka", "sestanek"];
 const NEEDS_REVIEW = ["skill", "prompt"];
 const MAX_CHARS = 20000;
+const MAX_TRANSCRIPT = 400000;    // a 3–4 hour meeting
+const CAPTION_EXT = ["vtt", "srt"];
 const MAX_PER_HOUR = 60;          // entries + files per link per hour
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 8 * 1048576;
@@ -39,6 +42,32 @@ const slug = (n: string) => n.normalize("NFD").replace(/[\u0300-\u036f]/g, "").t
 const b64ToBytes = (b: string) => Uint8Array.from(atob(b.replace(/^data:[^,]*,/, "").replace(/\s+/g, "")), (c) => c.charCodeAt(0));
 
 type InFile = { name: string; bytes: Uint8Array };
+
+// .vtt / .srt captions → "Name: text" paragraphs
+function tidyCaptions(t: string): string {
+  const lines = t.replace(/\r\n?/g, "\n").split("\n");
+  const out: { who: string | null; text: string }[] = [];
+  let skip = false;
+  const push = (who: string | null, text: string) => {
+    text = text.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+    if (!text) return;
+    const last = out[out.length - 1];
+    if (last && last.who === who && (who || last.text.length < 450)) last.text += " " + text;
+    else out.push({ who, text });
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const tl = lines[i].trim();
+    if (/^WEBVTT/.test(tl) || /^(NOTE|STYLE|REGION)\b/.test(tl)) { skip = true; continue; }
+    if (!tl) { skip = false; continue; }
+    if (skip || tl.includes("-->") || (lines[i + 1] ?? "").includes("-->")) continue;
+    const v = tl.match(/^<v(?:\.[\w.-]+)?\s+([^>]+)>(.*?)(?:<\/v>)?$/);
+    if (v) { push(v[1].trim(), v[2]); continue; }
+    const sp = tl.match(/^([^\s:][^:]{0,40}):\s+(.+)$/);
+    if (sp && !/^https?$/i.test(sp[1])) { push(sp[1].trim(), sp[2]); continue; }
+    push(out.length ? out[out.length - 1].who : null, tl);
+  }
+  return out.map((o) => (o.who ? `${o.who}: ${o.text}` : o.text)).join("\n\n");
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -82,6 +111,7 @@ Deno.serve(async (req) => {
       'Give a skill or prompt a short name: `{"kind": "skill", "name": "blog-writer", "text": "..."}`. Sending the same name again creates a new version; once approved it replaces the old one (kept as history). Without a name, the `name:` line of the skill front matter is used, then the file name.',
       `Files: ${Object.keys(FILE_TYPES).join(", ")}; .md/.txt are stored as text. Max ${MAX_FILES} files, 8 MB each.`,
       `Limits: ${MAX_PER_HOUR} entries+files per hour, ${MAX_CHARS} characters per entry.`,
+      'Meeting: `{"kind": "sestanek", "title": "Weekly team meeting", "date": "2026-11-17T10:00", "participants": ["Ana", "Marko"], "summary": "## Povzetek ...", "transcript": "full transcript"}`. The transcript can also be a .vtt, .srt or .txt file. The summary is what AI tools read; keep decisions under `## Odločitve` and tasks under `## Naloge`.',
       "Short, factual entries, in Slovenian if possible. One entry per finished step or problem.",
     ].join("\n"));
   }
@@ -91,6 +121,9 @@ Deno.serve(async (req) => {
   let body = "", kind = url.searchParams.get("kind") ?? "", rawName = url.searchParams.get("name") ?? "";
   const files: InFile[] = [];
   let fileName = "";
+  // meeting fields
+  let mTitle = "", mDate = "", mWho: string[] = [], mSummary = "", mTranscript = "", mPrivate = false;
+  const whoList = (v: unknown) => (Array.isArray(v) ? v : String(v ?? "").split(/[,;\n]/)).map((x) => String(x).trim().slice(0, 80)).filter(Boolean).slice(0, 40);
   const ct = req.headers.get("content-type") ?? "";
   try {
     if (ct.includes("application/json")) {
@@ -98,6 +131,8 @@ Deno.serve(async (req) => {
       body = String(j.text ?? j.content ?? j.message ?? "");
       if (j.kind) kind = String(j.kind);
       if (j.name) rawName = String(j.name);
+      mTitle = String(j.title ?? ""); mDate = String(j.date ?? j.meeting_at ?? ""); mWho = whoList(j.participants);
+      mSummary = String(j.summary ?? ""); mTranscript = String(j.transcript ?? ""); mPrivate = j.private === true;
       for (const f of Array.isArray(j.files) ? j.files : []) {
         if (!f?.name || !f?.data) return json({ error: "each file needs name and base64 data" }, 400);
         files.push({ name: String(f.name), bytes: b64ToBytes(String(f.data)) });
@@ -107,6 +142,8 @@ Deno.serve(async (req) => {
       body = String(form.get("text") ?? "");
       if (form.get("kind")) kind = String(form.get("kind"));
       if (form.get("name")) rawName = String(form.get("name"));
+      mTitle = String(form.get("title") ?? ""); mDate = String(form.get("date") ?? ""); mWho = whoList(form.get("participants"));
+      mSummary = String(form.get("summary") ?? ""); mTranscript = String(form.get("transcript") ?? ""); mPrivate = form.get("private") === "true";
       for (const v of form.getAll("file")) {
         if (v instanceof File) files.push({ name: v.name, bytes: new Uint8Array(await v.arrayBuffer()) });
       }
@@ -123,7 +160,14 @@ Deno.serve(async (req) => {
   for (const f of files) {
     const e = ext(f.name);
     if (f.bytes.byteLength > MAX_FILE_BYTES) return json({ error: `${f.name} is larger than 8 MB` }, 400);
-    if (TEXT_EXT.includes(e)) {
+    if (CAPTION_EXT.includes(e) || (kind === "sestanek" && TEXT_EXT.includes(e))) {
+      // transcripts: captions are cleaned up, plain text kept as is
+      const t = new TextDecoder().decode(f.bytes);
+      const clean = CAPTION_EXT.includes(e) ? tidyCaptions(t) : t.replace(/\r\n/g, "\n").trim();
+      mTranscript = mTranscript.trim() ? `${mTranscript.trim()}\n\n${clean}` : clean;
+      kind = "sestanek";
+      if (!mTitle) mTitle = f.name.replace(/\.[^.]+$/, "").replace(/_+/g, " ");
+    } else if (TEXT_EXT.includes(e)) {
       const t = new TextDecoder().decode(f.bytes).replace(/\r\n/g, "\n").trim();
       body = body.trim() ? `${body.trim()}\n\n---\n\n${t}` : t;
       if (!kind && (e === "md" || e === "markdown")) kind = "skill";
@@ -136,7 +180,22 @@ Deno.serve(async (req) => {
   }
 
   body = body.trim();
-  if (!body && !stored.length) return json({ error: "nothing to save (no text and no files)" }, 400);
+  // ---- meetings: summary (what AI reads) + full transcript ----
+  let meeting: Record<string, unknown> = {};
+  if (!kind && (mTranscript.trim() || mSummary.trim())) kind = "sestanek";
+  if (kind === "sestanek") {
+    body = (mSummary.trim() || body).trim();
+    const tr = mTranscript.trim();
+    if (!body && !tr) return json({ error: "a meeting needs a summary or a transcript" }, 400);
+    if (tr.length > MAX_TRANSCRIPT) return json({ error: `transcript longer than ${MAX_TRANSCRIPT} characters` }, 400);
+    const at = mDate ? new Date(mDate) : new Date();
+    meeting = {
+      title: (mTitle.trim() || "Sestanek").slice(0, 140),
+      meeting_at: isNaN(at.getTime()) ? new Date().toISOString() : at.toISOString(),
+      participants: mWho, transcript: tr || null, transcript_private: mPrivate,
+    };
+  }
+  if (!body && !stored.length && kind !== "sestanek") return json({ error: "nothing to save (no text and no files)" }, 400);
   if (body.length > MAX_CHARS) return json({ error: `text longer than ${MAX_CHARS} characters` }, 400);
   if (!kind) kind = stored.length && !body ? "datoteka" : "misel";
   if (!KINDS.includes(kind)) kind = "misel";
@@ -180,7 +239,7 @@ Deno.serve(async (req) => {
 
   const { data, error } = await db.from("entries").insert({
     project_id: link.project_id, kind, text: body, files: saved, author: null,
-    author_name: name, agent_id: agent?.id ?? null, source: "agent", review, skill_name: skillName, version,
+    author_name: name, agent_id: agent?.id ?? null, source: "agent", review, skill_name: skillName, version, ...meeting,
   }).select("id").single();
   if (error) {
     if (saved.length) await db.storage.from("files").remove(saved.map((s) => s.path));

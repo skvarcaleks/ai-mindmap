@@ -13,6 +13,7 @@ const KINDS = [
   { id: 'misel', label: 'misel', c: '#e6e9f5', g: '✦', hint: 'Ideja ali opažanje, karkoli se ti zdi vredno zapisati.' },
   { id: 'odlocitev', label: 'odločitev', c: '#ffb454', g: '★', hint: 'Nekaj, kar je dogovorjeno in velja.' },
   { id: 'todo', label: 'za narediti', c: '#ff6b6b', g: '◌', hint: 'Naloga ali odprto vprašanje.' },
+  { id: 'sestanek', label: 'sestanek', c: '#5fd4c4', g: '◎', hint: 'Transkript sestanka in zapisnik. Odpre se obrazec.' },
   { id: 'povezava', label: 'povezava', c: '#7ee0ff', g: '↗', hint: 'Spletna stran ali vir. Prilepi naslov v besedilo.' },
   { id: 'datoteka', label: 'datoteka', c: '#c3a6ff', g: '▣', hint: 'Slika, PDF ali dokument. Pripni ga spodaj.' },
   { id: 'skill', label: 'skill', c: '#9be564', g: '⚙', hint: 'Navodila za AI (npr. SKILL.md). Pripni .md datoteko ali prilepi besedilo.' },
@@ -32,6 +33,7 @@ let urls = {};            // storage path -> signed url
 let agentsById = {};
 let spaceF = 'vse'; try { spaceF = localStorage.getItem('aimm-space') || 'vse'; } catch (e) {}
 let kind = 'misel', fkind = null, pending = [], editing = null, busy = false, lastLoad = 0;
+let trHits = new Set(), trQ = '';   // meetings whose transcript matches the search
 
 /* ---------------- helpers ---------------- */
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -132,10 +134,11 @@ async function loadEntries() {
   entries = []; urls = {};
   if (!cur) return;
   const { data, error } = await sb.from('entries')
-    .select('id,project_id,kind,text,files,created_at,edited_at,author,author_name,done_at,done_by,source,via,agent_id,review,skill_name,version,superseded_by')
+    .select('id,project_id,kind,text,files,created_at,edited_at,author,author_name,done_at,done_by,source,via,agent_id,review,skill_name,version,superseded_by,title,meeting_at,participants,transcript_private,transcript_words,parent_id')
     .eq('project_id', cur).order('created_at');
   if (error) throw error;
-  entries = data.map(e => ({ ...e, t: new Date(e.created_at).getTime(), files: e.files || [], whoName: e.author_name || 'nekdo' }));
+  entries = data.map(e => ({ ...e, t: new Date(e.created_at).getTime(), files: e.files || [], participants: e.participants || [], whoName: e.author_name || 'nekdo' }));
+  trHits = new Set(); trQ = '';
   const aids = [...new Set(entries.map(e => e.agent_id).filter(Boolean))];
   agentsById = {};
   if (aids.length) {
@@ -262,7 +265,7 @@ function seg(box, list, isOn, onPick) {
   });
 }
 function renderKinds() {
-  seg($('#kinds'), KINDS, x => x.id === kind, x => { kind = x.id; renderKinds(); if (x.id === 'datoteka') $('#dropzone').focus(); });
+  seg($('#kinds'), KINDS, x => x.id === kind, x => { if (x.id === 'sestanek') { openMeeting(); return; } kind = x.id; renderKinds(); if (x.id === 'datoteka') $('#dropzone').focus(); });
   $('#kindHint').textContent = K[kind].hint;
   seg($('#fkinds'), [{ id: null, label: 'vse', c: '#e6e9f5', g: '∗' }, ...KINDS], x => x.id === fkind, x => { fkind = x.id; renderKinds(); renderFeed(); });
 }
@@ -276,7 +279,9 @@ function renderFeed() {
   const p = P(), ul = $('#feed'); ul.innerHTML = ''; if (!p) return;
   const q = $('#q').value.trim().toLowerCase();
   const hideDone = $('#hideDone').checked;
-  const list = entries.map((e, i) => ({ e, i })).filter(({ e }) => !e.superseded_by && !(hideDone && e.done_at) && (!fkind || e.kind === fkind) && (!q || (e.text || '').toLowerCase().includes(q) || e.files.some(f => f.name.toLowerCase().includes(q)))).reverse();
+  const hit = e => (e.text || '').toLowerCase().includes(q) || (e.title || '').toLowerCase().includes(q) || e.participants.some(x => x.toLowerCase().includes(q)) || e.files.some(f => f.name.toLowerCase().includes(q));
+  const trHit = e => trQ === q && trHits.has(e.id);
+  const list = entries.map((e, i) => ({ e, i })).filter(({ e }) => !e.superseded_by && !(hideDone && e.done_at) && (!fkind || e.kind === fkind) && (!q || hit(e) || trHit(e))).reverse();
   if (!list.length) {
     ul.innerHTML = entries.length
       ? `<li class="empty"><b>Ni zadetkov.</b><span>Poskusi drugo besedo ali izberi filter »vse«.</span></li>`
@@ -288,12 +293,13 @@ function renderFeed() {
     li.className = 'entry' + (e.done_at ? ' done' : '') + (e.review ? ' review' : ''); li.id = 'e-' + e.id; li.style.setProperty('--c', k.c);
     const mine = e.author === me.id || me.is_admin;
     const older = e.skill_name ? entries.filter(x => x.superseded_by === e.id).sort((a, b) => b.t - a.t) : [];
+    const parent = e.parent_id ? entries.find(x => x.id === e.parent_id) : null;
     const live = e.review && e.skill_name ? entries.find(x => x.id !== e.id && x.skill_name === e.skill_name && x.agent_id === e.agent_id && !x.review && !x.superseded_by) : null;
     li.innerHTML = `<span class="glyph" aria-hidden="true">${k.g}</span><div style="min-width:0">
-      <div class="meta"><span>${stamp(e.t)}</span><span>${catalog(p, i)}</span><span class="cat">${k.label}</span>${e.skill_name ? `<span class="sname">${esc(e.skill_name)}${e.version ? ` · v${e.version}` : ''}</span>` : ''}${e.source === 'agent'
+      <div class="meta"><span>${stamp(e.t)}</span><span>${catalog(p, i)}</span><span class="cat">${k.label}</span>${parent ? `<button class="ghost from" type="button" data-from>↳ ${esc(parent.title || 'sestanek')}</button>` : ''}${q && trHit(e) && !hit(e) ? '<span class="trhit">zadetek v transkriptu</span>' : ''}${e.skill_name ? `<span class="sname">${esc(e.skill_name)}${e.version ? ` · v${e.version}` : ''}</span>` : ''}${e.source === 'agent'
         ? `${agentChip(agentsById[e.agent_id] || { name: e.whoName })}<span class="agent">AGENT</span>${e.review ? '<span class="rvw">ZA PREGLED</span>' : ''}`
         : `<span class="person">${ico('user')}@${esc(e.whoName)}</span>${e.via ? `<span class="viatag">· prek ${VIA_TOOL[e.via] ? toolIcon(VIA_TOOL[e.via], e.via) : ''}${esc(e.via)}</span>` : ''}`}${e.edited_at ? '<span>· urejeno</span>' : ''}${e.done_at ? `<span class="donemeta">✓ ${e.done_by ? '@' + esc(e.done_by) + ' ' : ''}${esc(ago(e.done_at))}</span>` : ''}</div>
-      ${editing === e.id
+      ${e.kind === 'sestanek' ? meetingHtml(e) : editing === e.id
         ? `<div class="edit"><textarea aria-label="Uredi vnos">${esc(e.text)}</textarea><div class="eb"><button class="btn sm primary" type="button" data-save>Shrani</button><button class="btn sm" type="button" data-cancel>Prekliči</button></div></div>`
         : (e.text ? (isDoc(e.kind)
             ? `<div class="md${e.text.length > 1200 || e.text.split('\n').length > 18 ? ' clamp' : ''}">${md(e.text)}</div><div class="mdtools">${(e.text.length > 1200 || e.text.split('\n').length > 18) ? `<button class="btn sm" type="button" data-more>Pokaži vse</button>` : ''}<button class="btn sm" type="button" data-copy>${ico('copy')}Kopiraj</button><button class="btn sm" type="button" data-dl>${ico('down')}Prenesi .md</button></div>`
@@ -312,6 +318,8 @@ function renderFeed() {
       li.querySelector('[data-copy]').onclick = () => copyText(e.text, 'kopirano');
       li.querySelector('[data-dl]').onclick = () => downloadMd(e.text);
     }
+    if (e.kind === 'sestanek') wireMeeting(li, e);
+    li.querySelector('[data-from]')?.addEventListener('click', () => jumpTo(parent.id));
     li.querySelectorAll('[data-vcopy]').forEach(b => b.onclick = () => copyText(entries.find(x => x.id === b.dataset.vcopy)?.text || '', 'kopirano'));
     li.querySelectorAll('[data-vdl]').forEach(b => b.onclick = () => downloadMd(entries.find(x => x.id === b.dataset.vdl)?.text || ''));
     const ok = li.querySelector('[data-ok]');
@@ -324,7 +332,7 @@ function renderFeed() {
     const imgs = e.files.filter(isImg);
     li.querySelectorAll('[data-img]').forEach(b => b.onclick = () => openLightbox(imgs[+b.dataset.img]));
     if (mine) {
-      li.querySelector('[data-edit]').onclick = () => { editing = e.id; renderFeed(); document.querySelector(`#e-${e.id} textarea`)?.focus(); };
+      li.querySelector('[data-edit]').onclick = () => { if (e.kind === 'sestanek') { openMeeting(e); return; } editing = e.id; renderFeed(); document.querySelector(`#e-${e.id} textarea`)?.focus(); };
       confirmBtn(li.querySelector('[data-del]'), 'res?', () => deleteEntry(e));
     }
     if (editing === e.id) {
@@ -348,6 +356,17 @@ async function toggleDone(e) {
   if (error) return fail('opravljeno', error);
   e.done_at = done ? new Date().toISOString() : null; e.done_by = done ? me.username : null;
   renderFeed(); toast(done ? 'opravljeno ✓' : 'spet odprto');
+}
+let qT;
+$('#q').addEventListener('input', () => { renderFeed(); clearTimeout(qT); qT = setTimeout(searchTranscripts, 350); });
+async function searchTranscripts() {
+  const raw = $('#q').value.trim(), q = raw.toLowerCase();
+  if (q.length < 3 || !cur || !entries.some(e => e.transcript_words)) { if (trQ) { trHits = new Set(); trQ = ''; renderFeed(); } return; }
+  const { data, error } = await sb.from('entries').select('id').eq('project_id', cur).eq('kind', 'sestanek')
+    .ilike('transcript', '%' + raw.replace(/[\\%_]/g, m => '\\' + m) + '%');
+  if (error) return console.warn(error);
+  if ($('#q').value.trim().toLowerCase() !== q) return;
+  trHits = new Set((data || []).map(x => x.id)); trQ = q; renderFeed();
 }
 $('#hideDone').onchange = () => { try { localStorage.setItem('aimm-hidedone', $('#hideDone').checked ? '1' : ''); } catch (e) {} renderFeed(); };
 try { $('#hideDone').checked = localStorage.getItem('aimm-hidedone') === '1'; } catch (e) {}
@@ -410,15 +429,16 @@ const cvC = $('#constel'), tip = $('#tip');
 const hitAt = ev => { const b = cvC.getBoundingClientRect(), x = ev.clientX - b.left, y = ev.clientY - b.top; return { x, y, b, hit: chartPts.find(q => Math.hypot(q.x - x, q.y - y) < 12) }; };
 cvC.addEventListener('pointermove', ev => {
   const { x, y, b, hit } = hitAt(ev);
-  if (hit) { tip.style.opacity = 1; tip.textContent = `${catalog(P(), hit.i)} › ${(hit.e.text || hit.e.files[0]?.name || '').slice(0, 90)}`; tip.style.left = Math.max(0, Math.min(x + 12, b.width - 260)) + 'px'; tip.style.top = (y + 14) + 'px'; cvC.style.cursor = 'pointer'; }
+  if (hit) { tip.style.opacity = 1; tip.textContent = `${catalog(P(), hit.i)} › ${(hit.e.title || hit.e.text || hit.e.files[0]?.name || '').slice(0, 90)}`; tip.style.left = Math.max(0, Math.min(x + 12, b.width - 260)) + 'px'; tip.style.top = (y + 14) + 'px'; cvC.style.cursor = 'pointer'; }
   else { tip.style.opacity = 0; cvC.style.cursor = 'default'; }
 });
 cvC.addEventListener('pointerleave', () => tip.style.opacity = 0);
-cvC.addEventListener('click', ev => {
-  const { hit } = hitAt(ev); if (!hit) return; fkind = null; $('#q').value = ''; renderKinds(); renderFeed();
-  const el = document.getElementById('e-' + hit.e.id); el?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+function jumpTo(id) {
+  if (!document.getElementById('e-' + id)) { fkind = null; $('#q').value = ''; renderKinds(); renderFeed(); }
+  const el = document.getElementById('e-' + id); el?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
   el?.classList.add('flash'); setTimeout(() => el?.classList.remove('flash'), 1400);
-});
+}
+cvC.addEventListener('click', ev => { const { hit } = hitAt(ev); if (hit) jumpTo(hit.e.id); });
 addEventListener('resize', () => { if (!$('#app').hidden) renderChart(); });
 
 function renderHead() {
@@ -502,6 +522,7 @@ async function importText(f) {
 }
 function addFiles(list) {
   [...list].forEach(f => {
+    if (/\.(vtt|srt)$/i.test(f.name)) { openMeeting().then(() => importTranscript(f)).catch(e => fail('uvoz', e)); return; }
     if (TEXT_FILE.test(f.name) && f.size < 1048576) { importText(f).catch(e => fail('uvoz', e)); return; }
     if (f.size > MAX_FILE) { toast(f.name + ' je večja od 8 MB'); return; }
     const item = { file: f, name: f.name, type: f.type || 'application/octet-stream', size: f.size, preview: isImg(f) ? URL.createObjectURL(f) : null };
@@ -593,6 +614,218 @@ $('#micBtn').onclick = () => {
   try { rec.start(); } catch (err) { $('#status').textContent = 'Narekovanja ni bilo mogoče zagnati.'; }
 };
 
+/* ---------------- meetings ---------------- */
+let mEdit = null, mBusy = false, mProj = null;
+const localDT = d => { const x = new Date(d); return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`; };
+const words = t => (t.trim().match(/\S+/g) || []).length;
+async function getTranscript(e) {
+  if (e._tr != null) return e._tr;
+  const { data, error } = await sb.from('entries').select('transcript').eq('id', e.id).single();
+  if (error) throw error;
+  return (e._tr = data.transcript || '');
+}
+function meetingHtml(e) {
+  const kids = entries.filter(x => x.parent_id === e.id && !x.superseded_by);
+  const nd = kids.filter(x => x.kind === 'odlocitev').length, nt = kids.filter(x => x.kind === 'todo').length;
+  const long = (e.text || '').length > 1200 || (e.text || '').split('\n').length > 18;
+  const bits = [esc(stamp(e.meeting_at || e.created_at))];
+  if (e.participants.length) bits.push(`${ico('users')}${esc(e.participants.join(', '))}`);
+  if (e.transcript_words) bits.push(`${e.transcript_words.toLocaleString('sl-SI')} besed transkripta`);
+  if (e.transcript_private) bits.push(`${ico('lock')}transkript samo v aplikaciji`);
+  if (nd || nt) bits.push(`iz njega: ${[nd && nd + ' odločitev', nt && nt + ' nalog'].filter(Boolean).join(', ')}`);
+  return `<div class="mtitle">${esc(e.title || 'Sestanek')}</div><div class="mline">${bits.map(b => `<span>${b}</span>`).join('')}</div>
+    ${e.text ? `<div class="md${long ? ' clamp' : ''}">${md(e.text)}</div>`
+      : `<div class="nomin">Zapisnika še ni. Klikni <b>Prompt za zapisnik</b>, prilepi ga v katerikoli AI, odgovor pa dodaj z gumbom Uredi.</div>`}
+    <div class="mdtools">${long ? '<button class="btn sm" type="button" data-more>Pokaži vse</button>' : ''}${e.text ? `<button class="btn sm" type="button" data-copy>${ico('copy')}Kopiraj zapisnik</button>` : ''}${e.transcript_words
+      ? `<button class="btn sm" type="button" data-tr aria-expanded="false">${ico('file')}Transkript</button><button class="btn sm" type="button" data-trcopy>${ico('copy')}Kopiraj transkript</button><button class="btn sm" type="button" data-mprompt>${ico('copy')}Prompt za zapisnik</button>` : ''}</div>
+    <div class="trbox" hidden><pre></pre></div>`;
+}
+function wireMeeting(li, e) {
+  const box = li.querySelector('.md'), more = li.querySelector('[data-more]');
+  if (more) more.onclick = () => { const c = box.classList.toggle('clamp'); more.textContent = c ? 'Pokaži vse' : 'Skrči'; };
+  li.querySelector('[data-copy]')?.addEventListener('click', () => copyText(`# ${e.title}\n${stamp(e.meeting_at || e.created_at)}${e.participants.length ? ' · ' + e.participants.join(', ') : ''}\n\n${e.text}`, 'zapisnik kopiran'));
+  const trBtn = li.querySelector('[data-tr]'); if (!trBtn) return;
+  const trBox = li.querySelector('.trbox');
+  trBtn.onclick = async () => {
+    if (!trBox.hidden) { trBox.hidden = true; trBtn.setAttribute('aria-expanded', 'false'); return; }
+    trBox.hidden = false; trBtn.setAttribute('aria-expanded', 'true'); trBox.querySelector('pre').textContent = '> nalagam…';
+    try { trBox.querySelector('pre').textContent = await getTranscript(e); } catch (x) { trBox.hidden = true; fail('transkript', x); }
+  };
+  li.querySelector('[data-trcopy]').onclick = async () => { try { copyText(await getTranscript(e), 'transkript kopiran'); } catch (x) { fail('transkript', x); } };
+  li.querySelector('[data-mprompt]').onclick = async () => {
+    try { copyText(minutesPrompt(e.title, stamp(e.meeting_at || e.created_at), e.participants.join(', '), await getTranscript(e)), 'prompt kopiran, prilepi ga v AI'); } catch (x) { fail('transkript', x); }
+  };
+}
+function minutesPrompt(title, at, who, tr) {
+  return [`Spodaj je transkript sestanka »${title || 'sestanek'}«${at ? ` (${at})` : ''}${who ? `, udeleženci: ${who}` : ''}.`,
+    'Napiši zapisnik v slovenščini, točno v tej obliki in brez uvoda:', '',
+    '## Povzetek', '3–6 stavkov: o čem je tekla beseda in kaj je bistveno.', '',
+    '## Odločitve', '- ena odločitev na vrstico', '',
+    '## Naloge', '- [ ] kdo: kaj (rok, če je omenjen)', '',
+    '## Odprta vprašanja', '- vprašanje', '',
+    'Razdelek brez vsebine izpusti. Ničesar si ne izmišljuj in ne dodajaj, česar ni v transkriptu. Imena piši tako, kot so v transkriptu.', '',
+    '--- TRANSKRIPT ---', tr].join('\n');
+}
+// pull decisions and to-dos out of minutes written in the format above (or close to it)
+function parseMinutes(t) {
+  const out = { odlocitev: [], todo: [] }; let sec = null;
+  for (const raw of (t || '').split('\n')) {
+    const h = raw.match(/^\s*#{1,4}\s*(.+?)\s*:?\s*$/) || raw.match(/^\s*\*\*(.+?)\*\*\s*:?\s*$/);
+    if (h) {
+      const n = h[1].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      sec = /odlocit|sklep|decision/.test(n) ? 'odlocitev' : /nalog|to-?do|action|opravil/.test(n) ? 'todo' : null; continue;
+    }
+    const li = raw.match(/^\s*(?:[-*•]|\d+[.)])\s+(?:\[[ xX]?\]\s*)?(.+)$/);
+    const v = li && li[1].trim();
+    if (sec && v && !/^(ni|brez|nobene?n?a?|none|n\/a|—|–|-)\.?$/i.test(v)) out[sec].push(v.slice(0, 2000));
+  }
+  return out;
+}
+// .vtt / .srt captions and pasted transcripts → readable "Ime: besedilo" lines
+function tidyTranscript(t, captions) {
+  const lines = t.replace(/\r\n?/g, '\n').split('\n'), out = [], seen = {};
+  let skip = false;
+  const push = (who, text) => {
+    text = text.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim(); if (!text) return;
+    if (who) seen[who] = (seen[who] || 0) + 1;
+    const last = out[out.length - 1];
+    // same speaker continues; captions without names are grouped into ~paragraph-sized chunks
+    if (last && last.who === who && (who || last.text.length < 450)) last.text += ' ' + text; else out.push({ who, text });
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i], tl = l.trim();
+    if (captions) {
+      if (/^WEBVTT/.test(tl)) { skip = true; continue; }
+      if (/^(NOTE|STYLE|REGION)\b/.test(tl)) { skip = true; continue; }
+      if (!tl) { skip = false; continue; }
+      if (skip) continue;
+      if (tl.includes('-->') || (lines[i + 1] || '').includes('-->')) continue;   // timing line or cue id
+      const v = tl.match(/^<v(?:\.[\w.-]+)?\s+([^>]+)>(.*?)(?:<\/v>)?$/);
+      if (v) { push(v[1].trim(), v[2]); continue; }
+      const sp = tl.match(/^([^\s:][^:]{0,40}):\s+(.+)$/);
+      if (sp && !/^https?$/i.test(sp[1])) { push(sp[1].trim(), sp[2]); continue; }
+      push(out.length ? out[out.length - 1].who : null, tl);
+    } else {
+      if (/^\(?\[?\d{1,2}:\d{2}(:\d{2})?\]?\)?$/.test(tl)) continue;            // bare timestamps
+      const sp = tl.match(/^([A-ZČŠŽĆĐ][^:\n]{0,40}):\s+/);
+      if (sp) seen[sp[1].trim()] = (seen[sp[1].trim()] || 0) + 1;
+      out.push({ raw: l });
+    }
+  }
+  const text = captions ? out.map(o => o.who ? `${o.who}: ${o.text}` : o.text).join('\n\n')
+    : out.map(o => o.raw).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const speakers = Object.entries(seen).filter(([n, c]) => c >= (captions ? 1 : 2) && n.length <= 40).sort((a, b) => b[1] - a[1]).map(([n]) => n).slice(0, 20);
+  return { text, speakers };
+}
+let mammothP = null;
+const loadMammoth = () => mammothP || (mammothP = new Promise((ok, no) => {
+  const sc = document.createElement('script');
+  sc.src = 'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js';
+  sc.onload = () => ok(window.mammoth); sc.onerror = () => { mammothP = null; no(new Error('bralnika za .docx ni bilo mogoče naložiti')); };
+  document.head.append(sc);
+}));
+async function importTranscript(f) {
+  if (f.size > 25 * 1048576) { toast(f.name + ' je prevelika'); return; }
+  $('#mStatus').textContent = 'berem ' + f.name + '…';
+  try {
+    let t;
+    if (/\.docx$/i.test(f.name)) t = (await (await loadMammoth()).extractRawText({ arrayBuffer: await f.arrayBuffer() })).value;
+    else if (/\.(vtt|srt|txt|md|markdown)$/i.test(f.name)) t = await f.text();
+    else { $('#mStatus').textContent = ''; toast('za transkript uporabi .vtt, .srt, .txt ali .docx'); return; }
+    const { text, speakers } = tidyTranscript(t, /\.(vtt|srt)$/i.test(f.name));
+    const ta = $('#mTr'); ta.value = ta.value.trim() ? ta.value.trim() + '\n\n' + text : text;
+    if (!$('#mTitle').value.trim()) $('#mTitle').value = f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').replace(/\s*[-–]\s*(transcript|transkript|prepis)\b.*$/i, '').trim().slice(0, 140);
+    if (!$('#mWho').value.trim() && speakers.length) $('#mWho').value = speakers.join(', ');
+    $('#mStatus').textContent = `uvoženo: ${f.name}`;
+  } catch (x) { $('#mStatus').textContent = ''; fail('uvoz', x); }
+  mRefresh();
+}
+function clearMeeting() {
+  ['#mTitle', '#mWho', '#mTr', '#mSum'].forEach(id => $(id).value = '');
+  $('#mAt').value = localDT(Date.now()); $('#mPriv').checked = false; $('#mSplit').checked = true; $('#mErr').textContent = ''; $('#mStatus').textContent = '';
+}
+async function openMeeting(e) {
+  $('#mErr').textContent = '';
+  if (e) {
+    mEdit = e; mProj = e.project_id;
+    $('#meetH').textContent = 'Uredi sestanek'; $('#mSaveLbl').textContent = 'Shrani spremembe';
+    $('#mTitle').value = e.title || ''; $('#mAt').value = localDT(e.meeting_at || e.created_at);
+    $('#mWho').value = e.participants.join(', '); $('#mSum').value = e.text || ''; $('#mPriv').checked = !!e.transcript_private;
+    $('#mTr').value = e.transcript_words ? '> nalagam…' : ''; $('#mTr').disabled = !!e.transcript_words; $('#mStatus').textContent = '';
+    mRefresh(); openSheet('#meetSheet', '#mTitle');
+    if (e.transcript_words) { try { $('#mTr').value = await getTranscript(e); } catch (x) { $('#mTr').value = ''; fail('transkript', x); } $('#mTr').disabled = false; }
+  } else {
+    // a half-finished new meeting survives closing the form; it is only cleared after saving
+    if (mEdit || mProj !== cur) clearMeeting();
+    mEdit = null; mProj = cur; $('#mTr').disabled = false;
+    $('#meetH').textContent = 'Nov sestanek'; $('#mSaveLbl').textContent = 'Shrani sestanek';
+    if (!$('#mAt').value) $('#mAt').value = localDT(Date.now());
+    openSheet('#meetSheet', '#mTitle');
+  }
+  mRefresh();
+}
+function mRefresh() {
+  const tr = $('#mTr').disabled ? '' : $('#mTr').value, sum = $('#mSum').value;
+  const n = words(tr); $('#mWords').textContent = n ? `· ${n.toLocaleString('sl-SI')} besed` : '';
+  const pm = parseMinutes(sum), nd = pm.odlocitev.length, nt = pm.todo.length;
+  const hasKids = mEdit && entries.some(x => x.parent_id === mEdit.id);
+  $('#mSplitRow').hidden = !(nd || nt) || hasKids;
+  $('#mSplitN').textContent = [nd && `${nd} ${nd === 1 ? 'odločitev' : nd === 2 ? 'odločitvi' : nd < 5 ? 'odločitve' : 'odločitev'}`, nt && `${nt} ${nt === 1 ? 'nalogo' : nt === 2 ? 'nalogi' : nt < 5 ? 'naloge' : 'nalog'}`].filter(Boolean).join(' in ');
+  $('#mPromptBtn').disabled = !tr.trim();
+  $('#mSave').disabled = mBusy || !$('#mTitle').value.trim() || (!tr.trim() && !sum.trim());
+}
+['#mTitle', '#mTr', '#mSum'].forEach(id => $(id).addEventListener('input', mRefresh));
+$('#mFileBtn').onclick = () => $('#mFile').click();
+$('#mFile').onchange = ev => { const f = ev.target.files[0]; ev.target.value = ''; if (f) importTranscript(f); };
+$('#mPromptBtn').onclick = () => copyText(minutesPrompt($('#mTitle').value.trim(), $('#mAt').value.replace('T', ' '), $('#mWho').value.trim(), $('#mTr').value.trim()), 'prompt kopiran, prilepi ga v AI in odgovor prilepi spodaj');
+$('#mPasteSum').onclick = async () => {
+  try { const t = (await navigator.clipboard.readText()).trim(); if (!t) throw 0; const ta = $('#mSum'); ta.value = ta.value.trim() ? ta.value.trim() + '\n\n' + t : t; mRefresh(); }
+  catch (x) { $('#mSum').focus(); $('#mStatus').textContent = 'Prilepi z Ctrl+V (na telefonu: dolg pritisk → Prilepi).'; }
+};
+(() => {
+  const f = $('#meetForm');
+  ['dragenter', 'dragover'].forEach(t => f.addEventListener(t, ev => { ev.preventDefault(); f.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(t => f.addEventListener(t, ev => { ev.preventDefault(); if (t === 'drop' || !f.contains(ev.relatedTarget)) f.classList.remove('over'); }));
+  f.addEventListener('drop', ev => { const x = ev.dataTransfer.files[0]; if (x) importTranscript(x); });
+})();
+$('#meetForm').addEventListener('submit', async ev => {
+  ev.preventDefault(); if (mBusy) return;
+  const title = $('#mTitle').value.trim(), tr = $('#mTr').value.trim(), sum = $('#mSum').value.trim();
+  const err = m => { $('#mErr').textContent = m; };
+  if (!title) return err('Vpiši naslov sestanka.');
+  if (!tr && !sum) return err('Dodaj transkript ali zapisnik.');
+  if (tr.length > 400000) return err('Transkript je predolg (največ 400.000 znakov). Razdeli ga na dva sestanka.');
+  if (sum.length > 20000) return err('Zapisnik je predolg (največ 20.000 znakov).');
+  const projectId = mEdit ? mEdit.project_id : mProj;
+  const row = {
+    title, text: sum, transcript: tr || null, transcript_private: $('#mPriv').checked,
+    meeting_at: $('#mAt').value ? new Date($('#mAt').value).toISOString() : new Date().toISOString(),
+    participants: [...new Set($('#mWho').value.split(/[,;\n]/).map(x => x.trim()).filter(Boolean))].slice(0, 40)
+  };
+  const split = !$('#mSplitRow').hidden && $('#mSplit').checked ? parseMinutes(sum) : null;
+  mBusy = true; mRefresh(); $('#mStatus').textContent = 'shranjujem…'; err('');
+  try {
+    let id = mEdit?.id;
+    if (mEdit) {
+      const { error } = await sb.from('entries').update({ ...row, edited_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw error;
+    } else {
+      const { data, error } = await sb.from('entries').insert({ ...row, project_id: projectId, kind: 'sestanek', files: [], author: me.id }).select('id').single();
+      if (error) throw error; id = data.id;
+    }
+    if (split && (split.odlocitev.length || split.todo.length)) {
+      const rows = [...split.odlocitev.map(t => ({ kind: 'odlocitev', text: t })), ...split.todo.map(t => ({ kind: 'todo', text: t }))]
+        .map(r => ({ ...r, project_id: projectId, files: [], author: me.id, parent_id: id }));
+      const { error } = await sb.from('entries').insert(rows);
+      if (error) throw error;
+    }
+  } catch (x) { mBusy = false; $('#mStatus').textContent = ''; mRefresh(); return fail('sestanek', x); }
+  const wasEdit = !!mEdit; mBusy = false; mEdit = null; clearMeeting(); $('#meetSheet').hidden = true;
+  if (cur === projectId) { try { await loadEntries(); } catch (x) { fail('osvežitev', x); } }
+  renderAll(); toast(wasEdit ? 'sestanek posodobljen' : 'sestanek shranjen ◎');
+  if (!reduce && !wasEdit) meteor();
+});
+
 /* ---------------- sheets ---------------- */
 function openSheet(id, focus) { $(id).hidden = false; (focus ? $(focus) : $(id).querySelector('button'))?.focus(); }
 document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o || e.target.closest('[data-close]')) o.hidden = true; }));
@@ -606,9 +839,20 @@ function contextMd(p, links = {}) {
   KINDS.forEach(k => {
     const es = ok.filter(e => e.kind === k.id); if (!es.length) return;
     L.push(`## ${k.label}`);
+    if (k.id === 'sestanek') {
+      es.sort((a, b) => a.t - b.t).forEach(e => {
+        L.push(`### ${e.title || 'Sestanek'} · ${stamp(e.meeting_at || e.created_at)}`);
+        if (e.participants.length) L.push(`udeleženci: ${e.participants.join(', ')}`);
+        L.push('', (e.text || '_(zapisnika še ni)_').replace(/^(#{1,4})\s/gm, (_, h) => '#'.repeat(Math.min(6, h.length + 3)) + ' '));
+        if (e.transcript_words) L.push('', `_(celoten transkript: ${e.transcript_words} besed, v aplikaciji)_`);
+        L.push('');
+      });
+      return;
+    }
     es.sort((a, b) => a.t - b.t).forEach(e => {
+      const from = e.parent_id && ok.find(x => x.id === e.parent_id);
       const box = e.kind === 'todo' ? (e.done_at ? '[x] ' : '[ ] ') : '';
-      L.push(`- ${box}[${stamp(e.t)} @${e.whoName}] ${(e.text || '').replace(/\n/g, ' / ')}${e.done_at ? ` (opravljeno ${stamp(e.done_at)})` : ''}`);
+      L.push(`- ${box}[${stamp(e.t)} @${e.whoName}] ${(e.text || '').replace(/\n/g, ' / ')}${from ? ` (iz sestanka »${from.title || 'sestanek'}«)` : ''}${e.done_at ? ` (opravljeno ${stamp(e.done_at)})` : ''}`);
       e.files.forEach(f => L.push(`  - priponka: ${f.name}${links[f.path] ? ' → ' + links[f.path] : ''}`));
     });
     L.push('');
@@ -858,6 +1102,7 @@ const agentInstructions = (k, agentName, projName) => [
   `kind: misel (zapisek), odlocitev (odločitev), todo (naloga), povezava (povezava), skill (navodila za AI, v Markdownu), prompt. En vnos na korak, kratko in po dejstvih, v slovenščini.`,
   `Skille in prompte pred uporabo pregledam in odobrim. Skillu ali promptu daj kratko ime: {"kind": "skill", "name": "pisanje-clankov", "text": "..."}. Če pošlješ isto ime znova, nastane nova različica, ki po moji odobritvi nadomesti staro.`,
   `Datoteke: dodaj "files": [{"name": "porocilo.pdf", "data": "<base64>"}] (ali multipart/form-data s polji text, kind in file). Dovoljeno: slike (png, jpg, gif, webp), pdf, csv, docx, xlsx, md, txt; največ 5 datotek po 8 MB. Datoteke .md in .txt se shranijo kot besedilo.`,
+  `Sestanek: {"kind": "sestanek", "title": "Tedenski sestanek", "date": "2026-11-17T10:00", "participants": ["Ana", "Marko"], "summary": "## Povzetek ...", "transcript": "celoten transkript"}. Transkript lahko pošlješ tudi kot datoteko .vtt, .srt ali .txt.`,
   `Povezava lahko samo dodaja vnose (podpisane kot @${agentName}), ne more brati ali brisati.`,
   `Primer: curl -X POST "${writeUrl(k)}" -H "Content-Type: application/json" -d '{"text":"Uvožena predloga Investment.","kind":"misel"}'`
 ].join('\n');
