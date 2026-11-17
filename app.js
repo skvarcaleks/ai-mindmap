@@ -34,6 +34,9 @@ let agentsById = {};
 let spaceF = 'vse'; try { spaceF = localStorage.getItem('aimm-space') || 'vse'; } catch (e) {}
 let kind = 'misel', fkind = null, pending = [], editing = null, busy = false, lastLoad = 0;
 let trHits = new Set(), trQ = '';   // meetings whose transcript matches the search
+let view = 'project';                // 'project' | 'today'
+let todaySpace = 'delo';
+let todos = [], plans = new Map(), todoParents = {};   // all my to-dos across projects, my own plans for them
 
 /* ---------------- helpers ---------------- */
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -219,7 +222,7 @@ function renderProjects() {
     if (!list.length) return;
     if (spaceF === 'vse' && hasBoth) { const g = document.createElement('li'); g.className = 'grp'; g.textContent = sp.toUpperCase(); ul.append(g); }
     list.forEach(p => {
-      const li = document.createElement('li'); const on = p.id === cur; n++;
+      const li = document.createElement('li'); const on = view === 'project' && p.id === cur; n++;
       li.innerHTML = `<button class="proj" type="button" aria-current="${on}"><span class="mk">${on ? '▸' : String(n).padStart(2, '0')}</span><span class="nm">${esc(p.name)}</span><span class="ct">${p.count}★</span></button>`;
       li.querySelector('button').onclick = () => selectProject(p.id);
       ul.append(li);
@@ -227,13 +230,18 @@ function renderProjects() {
   });
   if (projects.length && !n) ul.innerHTML = `<li class="muted" style="padding:8px 0">V prostoru »${spaceF}« še ni projektov.</li>`;
   const sel = $('#projSelect');
-  const opt = p => `<option value="${p.id}"${p.id === cur ? ' selected' : ''}>${esc(p.name)} · ${p.count}★</option>`;
+  const opt = p => `<option value="${p.id}"${view === 'project' && p.id === cur ? ' selected' : ''}>${esc(p.name)} · ${p.count}★</option>`;
   const vis = projects.filter(p => spaceF === 'vse' || p.space === spaceF);
   sel.innerHTML = !vis.length ? '<option value="">ni projektov</option>'
     : (spaceF === 'vse' && hasBoth) ? spaces.map(sp => `<optgroup label="${sp.toUpperCase()}">${vis.filter(p => p.space === sp).map(opt).join('')}</optgroup>`).join('')
     : vis.map(opt).join('');
-  if (cur && !vis.some(p => p.id === cur)) sel.insertAdjacentHTML('afterbegin', `<option value="" selected disabled>izberi projekt…</option>`);
-  sel.disabled = !vis.length;
+  if (view === 'project' && cur && !vis.some(p => p.id === cur)) sel.insertAdjacentHTML('afterbegin', `<option value="" selected disabled>izberi projekt…</option>`);
+  if (projects.length) sel.insertAdjacentHTML('afterbegin', `<option value="__today"${view === 'today' ? ' selected' : ''}>☀ Danes${todayCount() ? ' · ' + todayCount() : ''}</option>`);
+  sel.disabled = !projects.length;
+  const tb = $('#todayBtn'); tb.hidden = !projects.length; tb.setAttribute('aria-current', view === 'today');
+  const tc = todayCount(), late = todayCount(true);
+  $('#todayCt').textContent = tc ? String(tc) : ''; $('#todayCt').classList.toggle('late', late > 0);
+  tb.title = tc ? `${tc} za danes${late ? `, ${late} zamuja` : ''}` : 'Naloge za danes iz vseh projektov';
   const sf = $('#spaceFilter');
   sf.hidden = !hasBoth && spaceF === 'vse';
   seg(sf, [{ id: 'vse', label: 'vse', c: '#e6e9f5', g: '∗' }, { id: 'delo', label: 'delo', c: '#7ee0ff', g: '◆' }, { id: 'osebno', label: 'osebno', c: '#ffb454', g: '●' }],
@@ -246,6 +254,7 @@ function renderProjects() {
   $('#roleBadge').classList.toggle('adm', me.is_admin);
 }
 async function selectProject(id) {
+  if (view === 'today') setView('project');
   cur = id; editing = null; try { localStorage.setItem('aimm-cur-' + me.id, id); } catch (e) {}
   renderHead(); renderProjects();
   $('#feed').innerHTML = '<li class="loading">&gt; nalagam vnose…</li>';
@@ -253,7 +262,7 @@ async function selectProject(id) {
   renderAll();
 }
 
-$('#projSelect').addEventListener('change', e => { if (e.target.value) selectProject(e.target.value); });
+$('#projSelect').addEventListener('change', e => { const v = e.target.value; if (v === '__today') setView('today'); else if (v) selectProject(v); });
 
 /* ---------------- render: kinds ---------------- */
 function seg(box, list, isOn, onPick) {
@@ -304,7 +313,7 @@ function renderFeed() {
         : (e.text ? (isDoc(e.kind)
             ? `<div class="md${e.text.length > 1200 || e.text.split('\n').length > 18 ? ' clamp' : ''}">${md(e.text)}</div><div class="mdtools">${(e.text.length > 1200 || e.text.split('\n').length > 18) ? `<button class="btn sm" type="button" data-more>Pokaži vse</button>` : ''}<button class="btn sm" type="button" data-copy>${ico('copy')}Kopiraj</button><button class="btn sm" type="button" data-dl>${ico('down')}Prenesi .md</button></div>`
             : e.kind === 'todo'
-              ? `<div class="todorow"><button class="tick" type="button" data-tick aria-pressed="${!!e.done_at}" aria-label="${e.done_at ? 'Označi kot neopravljeno' : 'Označi kot opravljeno'}"></button><div class="body">${linkify(e.text)}</div></div>`
+              ? `<div class="todorow"><button class="tick" type="button" data-tick aria-pressed="${!!e.done_at}" aria-label="${e.done_at ? 'Označi kot neopravljeno' : 'Označi kot opravljeno'}"></button><div class="body">${linkify(e.text)}</div></div>${e.done_at ? '' : feedPlanHtml(e)}`
               : `<div class="body">${linkify(e.text)}</div>`) : '')}
       ${e.files.length ? filesHtml(e.files) : ''}
       ${older.length ? `<details class="vers"><summary>Prejšnje različice (${older.length})</summary>${older.map(v => `<div class="ver"><div class="vmeta">${v.version ? 'v' + v.version + ' · ' : ''}${stamp(v.t)}</div><div class="md clamp">${md(v.text || '')}</div><div class="mdtools"><button class="btn sm" type="button" data-vcopy="${v.id}">${ico('copy')}Kopiraj</button><button class="btn sm" type="button" data-vdl="${v.id}">${ico('down')}Prenesi .md</button></div></div>`).join('')}</details>` : ''}
@@ -327,6 +336,7 @@ function renderFeed() {
       ok.onclick = () => approveEntry(e);
       confirmBtn(li.querySelector('[data-no]'), 'Res zavrni?', () => deleteEntry(e));
     }
+    li.querySelector('[data-plan]')?.addEventListener('click', ev => { const h = ev.currentTarget.dataset.plan; savePlan(e.id, { horizon: h || null }); });
     const tick = li.querySelector('[data-tick]');
     if (tick) tick.onclick = () => toggleDone(e);
     const imgs = e.files.filter(isImg);
@@ -355,7 +365,8 @@ async function toggleDone(e) {
   const { error } = await sb.rpc('set_todo_done', { eid: e.id, done });
   if (error) return fail('opravljeno', error);
   e.done_at = done ? new Date().toISOString() : null; e.done_by = done ? me.username : null;
-  renderFeed(); toast(done ? 'opravljeno ✓' : 'spet odprto');
+  const t = todos.find(x => x.id === e.id); if (t) { t.done_at = e.done_at; t.done_by = e.done_by; } else if (done === false) loadTodos().catch(console.warn);
+  renderFeed(); renderProjects(); toast(done ? 'opravljeno ✓' : 'spet odprto');
 }
 let qT;
 $('#q').addEventListener('input', () => { renderFeed(); clearTimeout(qT); qT = setTimeout(searchTranscripts, 350); });
@@ -466,7 +477,11 @@ async function enterApp() {
   $('#boot').hidden = true; $('#login').hidden = true; $('#pwGate').hidden = true; $('#app').hidden = false;
   $('#feed').innerHTML = '<li class="loading">&gt; nalagam…</li>';
   try { await loadProjects(); await loadEntries(); } catch (e) { fail('nalaganje', e); }
+  try { await loadTodos(); } catch (e) { console.warn(e); }
   renderAll();
+  // the home-screen app (and #danes links) open on today's to-dos
+  let startView = 'project'; try { startView = localStorage.getItem('aimm-view-' + me.id) || 'project'; todaySpace = localStorage.getItem('aimm-tdspace-' + me.id) || defaultTodaySpace(); } catch (e) { todaySpace = defaultTodaySpace(); }
+  if (standalone || location.hash === '#danes' || startView === 'today') setView('today');
   let seen = false; try { seen = localStorage.getItem('aimm-howto-' + me.id) === '1'; } catch (e) {}
   $('#howto').hidden = seen;
   if (!reduce) for (let i = 0; i < 3; i++) setTimeout(meteor, i * 200);
@@ -490,7 +505,7 @@ $('#gateForm').addEventListener('submit', async ev => {
   $('#p').value = '';
   enterApp();
 });
-$('#logout').onclick = async () => { stopRec(); await sb.auth.signOut(); me = null; projects = []; entries = []; cur = null; showLogin(); };
+$('#logout').onclick = async () => { stopRec(); await sb.auth.signOut(); me = null; projects = []; entries = []; cur = null; todos = []; plans = new Map(); view = 'project'; $('#app').classList.remove('today'); $('#todayView').hidden = true; showLogin(); };
 $('#howtoX').onclick = () => { $('#howto').hidden = true; try { localStorage.setItem('aimm-howto-' + me.id, '1'); } catch (e) {} };
 $('#helpBtn').onclick = () => { $('#howto').hidden = !$('#howto').hidden; };
 
@@ -613,6 +628,207 @@ $('#micBtn').onclick = () => {
   rec.onerror = e => { setMic(false); $('#status').textContent = (e.error === 'not-allowed' || e.error === 'service-not-allowed') ? 'Dostop do mikrofona je zavrnjen. Dovoli ga v nastavitvah brskalnika (ikona ključavnice ob naslovu).' : 'Narekovanje se je ustavilo (' + e.error + '). Poskusi znova.'; };
   try { rec.start(); } catch (err) { $('#status').textContent = 'Narekovanja ni bilo mogoče zagnati.'; }
 };
+
+/* ---------------- today: my to-dos from every project ---------------- */
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const todayStr = () => ymd(new Date());
+const dayDiff = (a, b) => Math.round((new Date(a + 'T12:00') - new Date(b + 'T12:00')) / 864e5);   // a − b, in days
+const DAYS = ['ned', 'pon', 'tor', 'sre', 'čet', 'pet', 'sob'];
+const DAYS_LONG = ['nedelja', 'ponedeljek', 'torek', 'sreda', 'četrtek', 'petek', 'sobota'];
+const dm = s => { const d = new Date(s + 'T12:00'); return `${d.getDate()}. ${d.getMonth() + 1}.`; };
+const nDni = n => n === 1 ? 'dan' : n === 2 ? 'dneva' : n < 5 ? 'dni' : 'dni';
+const HORIZONS = [
+  { id: 'danes', label: 'danes', g: '☀', c: 'var(--amber)' },
+  { id: 'teden', label: 'ta teden', g: '◷', c: 'var(--cyan)' },
+  { id: 'dolgorocno', label: 'dolgoročno', g: '∞', c: 'var(--violet)' },
+  { id: '', label: 'neplanirano', g: '○', c: 'var(--dim)' },
+];
+const TONE = { late: 'var(--red)', danes: 'var(--amber)', teden: 'var(--cyan)', dolgorocno: 'var(--violet)', none: 'var(--faint)', done: 'var(--green)' };
+
+function defaultTodaySpace() { return projects.some(p => p.space === 'delo') ? 'delo' : 'osebno'; }
+async function loadTodos() {
+  if (!me) return;
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const [r1, r2] = await Promise.all([
+    sb.from('entries').select('id,project_id,text,created_at,author_name,source,via,agent_id,done_at,done_by,parent_id')
+      .eq('kind', 'todo').is('superseded_by', null).eq('review', false)
+      .or(`done_at.is.null,done_at.gte."${start.toISOString()}"`).order('created_at'),
+    sb.from('todo_plans').select('entry_id,horizon,plan_day,due_on,importance').eq('user_id', me.id),
+  ]);
+  if (r1.error) throw r1.error; if (r2.error) throw r2.error;
+  const pj = new Set(projects.map(p => p.id));
+  todos = (r1.data || []).filter(t => pj.has(t.project_id)).map(t => ({ ...t, t: new Date(t.created_at).getTime() }));
+  plans = new Map((r2.data || []).map(x => [x.entry_id, x]));
+  const pids = [...new Set(todos.map(t => t.parent_id).filter(id => id && !(id in todoParents)))];
+  if (pids.length) { const { data } = await sb.from('entries').select('id,title').in('id', pids); (data || []).forEach(x => todoParents[x.id] = x.title); }
+}
+// where a to-do shows up today, and how it is colored and labelled
+function todoState(t) {
+  const p = plans.get(t.id) || {}, T = todayStr();
+  if (t.done_at) return { sec: 'done', tone: 'done', p, dd: null, carried: 0 };
+  const dd = p.due_on ? dayDiff(p.due_on, T) : null;
+  let sec = p.horizon || 'none';
+  if (dd !== null && dd <= 0) sec = 'danes';
+  else if (dd !== null && dd <= 6 && sec !== 'danes') sec = 'teden';
+  const carried = p.horizon === 'danes' && p.plan_day && p.plan_day < T ? dayDiff(T, p.plan_day) : 0;
+  return { sec, tone: dd !== null && dd < 0 ? 'late' : sec, p, dd, carried };
+}
+function dueBadge(st) {
+  const { dd, p } = st; if (dd === null) return '';
+  if (dd < 0) return `<span class="tb late">zamuja ${-dd} ${nDni(-dd)}</span>`;
+  if (dd === 0) return '<span class="tb now">rok danes</span>';
+  if (dd === 1) return '<span class="tb soon">rok jutri</span>';
+  const d = new Date(p.due_on + 'T12:00');
+  return `<span class="tb ${dd <= 6 ? 'soon' : 'far'}">rok ${dd <= 6 ? DAYS[d.getDay()] + ' ' : ''}${dm(p.due_on)}</span>`;
+}
+const spaceOf = t => projects.find(p => p.id === t.project_id)?.space;
+function todayCount(lateOnly) {
+  const sp = spaceF === 'vse' ? null : spaceF;
+  return todos.filter(t => (!sp || spaceOf(t) === sp)).map(todoState).filter(st => st.sec === 'danes' && (!lateOnly || st.tone === 'late')).length;
+}
+function feedPlanHtml(e) {
+  const t = todos.find(x => x.id === e.id) || { id: e.id }, st = todoState(t);
+  const h = HORIZONS.find(x => x.id === (st.p.horizon || '')) || HORIZONS[3];
+  const imp = st.p.importance ? `<span class="imp-s">${'!'.repeat(st.p.importance)}</span>` : '';
+  return `<div class="tplan" style="--tc:${TONE[st.tone]}">${st.p.horizon ? `<span class="tb hz">${h.g} ${h.label}</span>` : ''}${dueBadge(st)}${imp}
+    ${st.p.horizon === 'danes' ? '<button class="ghost" type="button" data-plan="">odstrani iz dneva</button>' : '<button class="ghost" type="button" data-plan="danes">☀ na danes</button>'}</div>`;
+}
+async function savePlan(id, patch) {
+  const old = plans.get(id) || { entry_id: id, horizon: null, plan_day: null, due_on: null, importance: 0 };
+  const next = { ...old, ...patch };
+  if ('horizon' in patch) next.plan_day = patch.horizon === 'danes' ? (old.horizon === 'danes' && !patch.reset ? old.plan_day || todayStr() : todayStr()) : null;
+  delete next.reset;
+  plans.set(id, next); renderToday(); if (view === 'project') renderFeed(); renderProjects();
+  const { error } = await sb.from('todo_plans').upsert({
+    user_id: me.id, entry_id: id, horizon: next.horizon || null, plan_day: next.plan_day, due_on: next.due_on || null,
+    importance: next.importance || 0, updated_at: new Date().toISOString(),
+  });
+  if (error) { plans.set(id, old); renderToday(); if (view === 'project') renderFeed(); renderProjects(); fail('načrt', error); }
+}
+function setView(v) {
+  view = v; const on = v === 'today';
+  $('#app').classList.toggle('today', on); $('#todayView').hidden = !on;
+  try { localStorage.setItem('aimm-view-' + me.id, v); } catch (e) {}
+  if (on) { renderToday(); loadTodos().then(() => { renderToday(); renderProjects(); }).catch(e => fail('naloge', e)); $('main').scrollTop = 0; }
+  renderProjects();
+}
+$('#todayBtn').onclick = () => setView('today');
+
+function todoRow(t, st) {
+  const pr = projects.find(p => p.id === t.project_id), imp = st.p.importance || 0;
+  const from = t.parent_id && todoParents[t.parent_id];
+  const meta = [`<span class="pj">${esc(pr?.code || '')} · ${esc(pr?.name || '')}</span>`];
+  if (from) meta.push(`<span class="frm">↳ ${esc(from)}</span>`);
+  if (t.source === 'agent') meta.push(`<span class="who">@${esc(t.author_name || 'agent')}</span>`);
+  const badges = [dueBadge(st), st.carried ? `<span class="tb carry" title="Na seznamu za danes od ${dm(st.p.plan_day)}">${st.carried + 1}. dan</span>` : '',
+    st.sec === 'done' && t.done_by && t.done_by !== me.username ? `<span class="tb far">✓ @${esc(t.done_by)}</span>` : ''].join('');
+  return `<li class="td${st.sec === 'done' ? ' done' : ''}" data-id="${t.id}" style="--tc:${TONE[st.tone]}">
+    <button class="tick" type="button" data-tick aria-pressed="${!!t.done_at}" aria-label="${t.done_at ? 'Označi kot neopravljeno' : 'Označi kot opravljeno'}"></button>
+    <button class="tdmain" type="button" data-open aria-expanded="false"><span class="tdtext">${esc(t.text)}</span><span class="tdmeta">${badges}${meta.join('')}</span></button>
+    <button class="imp" type="button" data-imp title="Pomembnost (samo zate): klik za spremembo" aria-label="Pomembnost ${imp} od 3"><i${imp > 0 ? ' class="on"' : ''}></i><i${imp > 1 ? ' class="on"' : ''}></i><i${imp > 2 ? ' class="on"' : ''}></i></button>
+    <div class="tdacts" hidden>
+      <div class="seg hz">${HORIZONS.map(h => `<button type="button" data-hz="${h.id}" style="--c:${h.c}" aria-pressed="${(st.p.horizon || '') === h.id}"><span class="g">${h.g}</span>${h.label}</button>`).join('')}</div>
+      <label class="due">rok <input type="date" data-due value="${st.p.due_on || ''}"></label>${st.p.due_on ? '<button class="ghost" type="button" data-nodue>brez roka</button>' : ''}
+      <button class="ghost" type="button" data-goto>odpri v projektu →</button>
+    </div></li>`;
+}
+function renderToday() {
+  if (view !== 'today' || !me) return;
+  const T = todayStr(), now = new Date();
+  const spaces = ['delo', 'osebno'].filter(sp => projects.some(p => p.space === sp));
+  if (!spaces.includes(todaySpace)) todaySpace = spaces[0] || 'delo';
+  $('#tdCoord').textContent = `${todaySpace.toUpperCase()} · ${DAYS_LONG[now.getDay()]}, ${now.getDate()}. ${now.getMonth() + 1}. ${now.getFullYear()}`;
+  const sw = $('#tdSpace'); sw.hidden = spaces.length < 2;
+  const cnt = sp => todos.filter(t => spaceOf(t) === sp).map(todoState).filter(x => x.sec === 'danes').length;
+  seg(sw, [{ id: 'delo', label: `delo${cnt('delo') ? ' · ' + cnt('delo') : ''}`, c: '#7ee0ff', g: '◆' }, { id: 'osebno', label: `osebno${cnt('osebno') ? ' · ' + cnt('osebno') : ''}`, c: '#ffb454', g: '●' }].filter(x => spaces.includes(x.id)),
+    x => x.id === todaySpace, x => { todaySpace = x.id; try { localStorage.setItem('aimm-tdspace-' + me.id, x.id); } catch (e) {} renderToday(); });
+
+  // quick add: projects of this space, remembered per space
+  const sel = $('#tdProj'), list = projects.filter(p => p.space === todaySpace);
+  let def = null; try { def = localStorage.getItem('aimm-tdproj-' + todaySpace); } catch (e) {}
+  if (!list.some(p => p.id === def)) def = (list.find(p => /splo[šs]no|inbox|osebno/i.test(p.name)) || list[0])?.id;
+  if (sel.dataset.space !== todaySpace || sel.options.length !== list.length) { sel.innerHTML = list.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join(''); sel.dataset.space = todaySpace; sel.value = def || ''; }
+
+  const mine = todos.filter(t => spaceOf(t) === todaySpace).map(t => ({ t, st: todoState(t) }));
+  const by = s => mine.filter(x => x.st.sec === s);
+  const imp = x => -(x.st.p.importance || 0), due = x => x.st.dd ?? 9999;
+  const sortDanes = a => a.sort((x, y) => (x.st.tone === 'late' ? 0 : 1) - (y.st.tone === 'late' ? 0 : 1) || due(x) - due(y) || imp(x) - imp(y) || y.st.carried - x.st.carried || x.t.t - y.t.t);
+  const sortRest = a => a.sort((x, y) => imp(x) - imp(y) || due(x) - due(y) || x.t.t - y.t.t);
+  const danes = sortDanes(by('danes')), teden = sortRest(by('teden')), dolgo = sortRest(by('dolgorocno')), none = sortRest(by('none'));
+  const done = by('done').sort((x, y) => new Date(y.t.done_at) - new Date(x.t.done_at));
+  const late = danes.filter(x => x.st.tone === 'late').length, carried = danes.filter(x => x.st.carried).length;
+
+  const bits = [`<b>${danes.length}</b> za danes`];
+  if (late) bits.push(`<b class="late">${late}</b> zamuja`);
+  if (teden.length) bits.push(`<b>${teden.length}</b> ta teden`);
+  if (done.length) bits.push(`<b class="ok">${done.length}</b> opravljeno danes`);
+  $('#tdSum').innerHTML = bits.join(' · ');
+
+  let open = {}; try { open = JSON.parse(localStorage.getItem('aimm-tdopen') || '{}'); } catch (e) {}
+  const sec = (id, label, color, items, opts = {}) => {
+    const body = items.length ? `<ul class="tdl">${items.map(x => todoRow(x.t, x.st)).join('')}</ul>` : `<div class="tdempty">${opts.empty || 'prazno'}</div>`;
+    if (opts.fold) {
+      const isOpen = id in open ? open[id] : !!opts.openDefault;
+      return `<details class="box tsec" data-sec="${id}" style="--sc:${color}"${isOpen ? ' open' : ''}><summary><span class="sg">${opts.g}</span>${label}<span class="n">${items.length}</span></summary>${body}</details>`;
+    }
+    return `<section class="box tsec" style="--sc:${color}"><div class="sh2"><span class="sg">${opts.g}</span>${label}<span class="n">${items.length}</span>${opts.extra || ''}</div>${body}</section>`;
+  };
+  // unplanned: grouped by project
+  const groups = list.map(p => ({ p, items: none.filter(x => x.t.project_id === p.id) })).filter(g => g.items.length);
+  const noneHtml = groups.length ? groups.map(g => `<div class="tdgrp">${esc(g.p.name)}</div><ul class="tdl">${g.items.map(x => todoRow(x.t, x.st)).join('')}</ul>`).join('')
+    : '<div class="tdempty">Vse odprte naloge so razporejene.</div>';
+  const noneOpen = 'none' in open ? open.none : false;
+  $('#tdLists').innerHTML =
+    sec('danes', 'Danes', 'var(--amber)', danes, { g: '☀', empty: 'Za danes še nič. Dodaj zgoraj ali izberi iz spodnjih seznamov (klik na nalogo → ☀ danes).',
+      extra: carried ? `<button class="ghost carrybtn" type="button" id="tdCarry" title="Zaostale naloge iz prejšnjih dni prestavi v Ta teden">prestavi zaostale (${carried}) v ta teden</button>` : '' }) +
+    sec('teden', 'Ta teden', 'var(--cyan)', teden, { g: '◷', empty: 'Nič za ta teden.' }) +
+    sec('dolgorocno', 'Dolgoročno', 'var(--violet)', dolgo, { g: '∞', fold: true, openDefault: dolgo.length <= 5, empty: 'Ni dolgoročnih nalog. Ostanejo tu, dokler jih ne opraviš.' }) +
+    `<details class="box tsec" data-sec="none" style="--sc:var(--dim)"${noneOpen ? ' open' : ''}><summary><span class="sg">○</span>Neplanirano<span class="n">${none.length}</span></summary>${noneHtml}</details>` +
+    (done.length ? sec('done', 'Opravljeno danes', 'var(--green)', done, { g: '✓', fold: true, openDefault: false }) : '');
+
+  $('#tdLists').querySelectorAll('details[data-sec]').forEach(d => d.addEventListener('toggle', () => {
+    open[d.dataset.sec] = d.open; try { localStorage.setItem('aimm-tdopen', JSON.stringify(open)); } catch (e) {}
+  }));
+  $('#tdCarry')?.addEventListener('click', () => danes.filter(x => x.st.carried && !(x.st.dd !== null && x.st.dd <= 0)).forEach(x => savePlan(x.t.id, { horizon: 'teden' })));
+  $('#tdLists').querySelectorAll('li.td').forEach(li => wireTodo(li, todos.find(t => t.id === li.dataset.id)));
+}
+function wireTodo(li, t) {
+  if (!t) return;
+  const acts = li.querySelector('.tdacts'), opener = li.querySelector('[data-open]');
+  opener.onclick = () => { acts.hidden = !acts.hidden; opener.setAttribute('aria-expanded', String(!acts.hidden)); li.classList.toggle('open', !acts.hidden); };
+  li.querySelector('[data-tick]').onclick = async () => {
+    const done = !t.done_at;
+    const { error } = await sb.rpc('set_todo_done', { eid: t.id, done });
+    if (error) return fail('opravljeno', error);
+    t.done_at = done ? new Date().toISOString() : null; t.done_by = done ? me.username : null;
+    const e = entries.find(x => x.id === t.id); if (e) { e.done_at = t.done_at; e.done_by = t.done_by; }
+    renderToday(); renderProjects(); toast(done ? 'opravljeno ✓' : 'spet odprto');
+    if (done && !reduce) meteor();
+  };
+  li.querySelector('[data-imp]').onclick = () => savePlan(t.id, { importance: ((plans.get(t.id)?.importance || 0) + 1) % 4 });
+  li.querySelectorAll('[data-hz]').forEach(b => b.onclick = () => savePlan(t.id, { horizon: b.dataset.hz || null, reset: true }));
+  li.querySelector('[data-due]').onchange = ev => savePlan(t.id, { due_on: ev.target.value || null });
+  li.querySelector('[data-nodue]')?.addEventListener('click', () => savePlan(t.id, { due_on: null }));
+  li.querySelector('[data-goto]').onclick = async () => { await selectProject(t.project_id); jumpTo(t.id); };
+}
+$('#tdAdd').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const text = $('#tdText').value.trim(), pid = $('#tdProj').value, when = $('#tdWhen').value, due = $('#tdDue').value;
+  if (!text) { $('#tdText').focus(); return; }
+  if (!pid) return toast('v tem prostoru še ni projekta');
+  const btn = $('#tdAdd button[type=submit]'); btn.disabled = true;
+  const { data, error } = await sb.from('entries').insert({ project_id: pid, kind: 'todo', text, files: [], author: me.id }).select('id,project_id,text,created_at,author_name,source,via,agent_id,done_at,done_by,parent_id').single();
+  btn.disabled = false;
+  if (error) return fail('naloga', error);
+  try { localStorage.setItem('aimm-tdproj-' + todaySpace, pid); } catch (e) {}
+  todos.push({ ...data, t: new Date(data.created_at).getTime() });
+  const pr = projects.find(p => p.id === pid); if (pr) pr.count++;
+  $('#tdText').value = ''; $('#tdDue').value = '';
+  if (when || due) await savePlan(data.id, { horizon: when || null, due_on: due || null, reset: true }); else { renderToday(); renderProjects(); }
+  if (cur === pid) { try { await loadEntries(); } catch (e) {} }
+  toast('naloga dodana'); $('#tdText').focus();
+});
 
 /* ---------------- meetings ---------------- */
 let mEdit = null, mBusy = false, mProj = null;
@@ -1102,6 +1318,7 @@ const agentInstructions = (k, agentName, projName) => [
   `kind: misel (zapisek), odlocitev (odločitev), todo (naloga), povezava (povezava), skill (navodila za AI, v Markdownu), prompt. En vnos na korak, kratko in po dejstvih, v slovenščini.`,
   `Skille in prompte pred uporabo pregledam in odobrim. Skillu ali promptu daj kratko ime: {"kind": "skill", "name": "pisanje-clankov", "text": "..."}. Če pošlješ isto ime znova, nastane nova različica, ki po moji odobritvi nadomesti staro.`,
   `Datoteke: dodaj "files": [{"name": "porocilo.pdf", "data": "<base64>"}] (ali multipart/form-data s polji text, kind in file). Dovoljeno: slike (png, jpg, gif, webp), pdf, csv, docx, xlsx, md, txt; največ 5 datotek po 8 MB. Datoteke .md in .txt se shranijo kot besedilo.`,
+  `Naloga na moj seznam: {"kind": "todo", "text": "...", "when": "danes" | "teden" | "dolgorocno", "due": "2026-11-21"} (when in due sta neobvezna).`,
   `Sestanek: {"kind": "sestanek", "title": "Tedenski sestanek", "date": "2026-11-17T10:00", "participants": ["Ana", "Marko"], "summary": "## Povzetek ...", "transcript": "celoten transkript"}. Transkript lahko pošlješ tudi kot datoteko .vtt, .srt ali .txt.`,
   `Povezava lahko samo dodaja vnose (podpisane kot @${agentName}), ne more brati ali brisati.`,
   `Primer: curl -X POST "${writeUrl(k)}" -H "Content-Type: application/json" -d '{"text":"Uvožena predloga Investment.","kind":"misel"}'`
@@ -1242,7 +1459,7 @@ addEventListener('focus', async () => {
   if (!me || busy || editing || Date.now() - lastLoad < 20000) return;
   if ($('#app').hidden) return;
   sb.rpc('touch_seen').then(({ error }) => error && console.warn(error));
-  try { await loadProjects(); await loadEntries(); renderAll(); } catch (e) { console.warn(e); }
+  try { await loadProjects(); await loadEntries(); await loadTodos(); renderAll(); if (view === 'today') renderToday(); } catch (e) { console.warn(e); }
 });
 
 /* ---------------- easter eggs ---------------- */

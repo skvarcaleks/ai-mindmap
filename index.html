@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Aleks's AI mindmap</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/favicon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#03040a">
+<meta name="apple-mobile-web-app-title" content="Mindmap">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Pixelify+Sans:wght@400;600&display=swap">
 <style>
@@ -357,6 +366,79 @@ li.grp:first-child{border-top:0;padding-top:4px}
 .vers[open] summary::before{transform:rotate(90deg)}
 .vers .ver{margin-top:8px;padding:8px 10px;border-left:1px dashed color-mix(in srgb,var(--c) 45%,transparent);opacity:.8}
 .vers .vmeta{color:var(--dim);font-size:11px;margin-bottom:4px}
+/* today */
+.todaybtn{display:grid;grid-template-columns:20px 1fr auto;gap:8px;align-items:center;width:100%;margin-top:18px;background:rgba(255,180,84,.05);border:1px solid var(--rule2);padding:9px 8px;color:var(--star);font-size:13px;text-align:left;min-height:40px}
+.todaybtn .sun{color:var(--amber);text-align:center}
+.todaybtn:hover{border-color:var(--amber)}
+.todaybtn[aria-current="true"]{border-color:var(--amber);color:var(--amber);box-shadow:inset 2px 0 0 var(--amber)}
+.todaybtn .ct{font-size:11px;min-width:22px;text-align:center;padding:0 5px;border:1px solid var(--amber);color:var(--amber)}
+.todaybtn .ct:empty{display:none}
+.todaybtn .ct.late{border-color:var(--red);color:var(--void);background:var(--red)}
+#app.today .wrap>:not(#todayView){display:none!important}
+#todayView{display:grid;gap:22px}
+#todayView[hidden]{display:none}
+.tdhead{align-items:flex-end}
+.tdsum{font-size:12px;color:var(--dim);margin-top:4px}
+.tdsum b{color:var(--star);font-weight:600}
+.tdsum b.late{color:var(--red)}
+.tdsum b.ok{color:var(--green)}
+.tdadd{padding:16px 14px 12px;display:grid;gap:10px}
+.tdadd #tdText{width:100%;background:transparent;border:0;border-bottom:1px solid var(--rule2);outline:none;padding:6px 2px 8px;font-size:15px;caret-color:var(--amber)}
+.tdadd #tdText:focus{border-bottom-color:var(--amber)}
+.tdaddrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tdaddrow select,.tdacts input[type=date],.tdaddrow input[type=date]{background:var(--void);border:1px solid var(--rule2);min-height:36px;padding:0 8px;font-size:12px;color:var(--star);color-scheme:dark;max-width:100%}
+.tdaddrow #tdProj{flex:1 1 140px;min-width:0}
+.tdaddrow .btn{margin-left:auto}
+label.due{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);letter-spacing:.04em}
+.tsec{padding:0 0 4px;border-color:color-mix(in srgb,var(--sc) 35%,var(--rule2))}
+.tsec>.sh2,.tsec>summary{display:flex;align-items:center;gap:10px;padding:12px 14px 8px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--sc);flex-wrap:wrap}
+.tsec>summary{cursor:pointer;list-style:none}
+.tsec>summary::-webkit-details-marker{display:none}
+.tsec>summary::after{content:"▸";margin-left:auto;color:var(--dim);transition:transform .15s}
+.tsec[open]>summary::after{transform:rotate(90deg)}
+.tsec .sg{font-size:14px;width:16px;text-align:center}
+.tsec .n{color:var(--dim);letter-spacing:0;font-size:11px;border:1px solid var(--rule2);padding:0 6px}
+.tsec .carrybtn{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11.5px;color:var(--dim)}
+.tsec .carrybtn:hover{color:var(--amber)}
+.tdempty{padding:4px 14px 12px 40px;color:var(--faint);font-size:12.5px}
+.tdgrp{padding:8px 14px 2px;font-size:10.5px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;border-top:1px dashed var(--rule)}
+.tdl{list-style:none;margin:0;padding:0}
+li.td{display:grid;grid-template-columns:auto 1fr auto;column-gap:6px;align-items:start;padding:7px 10px 7px 12px;border-left:3px solid var(--tc);margin:4px 8px;background:linear-gradient(90deg,color-mix(in srgb,var(--tc) 9%,transparent),transparent 55%)}
+li.td .tick{border-color:var(--tc);margin:3px 4px 0 0}
+li.td.done{opacity:.6}
+li.td.done .tdtext{text-decoration:line-through;text-decoration-color:var(--dim)}
+.tdmain{background:none;border:0;padding:2px 2px;text-align:left;min-width:0;display:grid;gap:3px;color:var(--star)}
+.tdtext{font-size:13.5px;line-height:1.45;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+li.td.open .tdtext{-webkit-line-clamp:unset}
+.tdmeta{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11px;color:var(--dim);align-items:center}
+.tdmeta .pj{color:var(--dim)}
+.tdmeta .frm{color:#5fd4c4}
+.tdmeta .who{color:var(--green)}
+.tb{font-size:10.5px;letter-spacing:.04em;padding:0 5px;border:1px solid var(--rule2);color:var(--dim);white-space:nowrap}
+.tb.late{background:var(--red);border-color:var(--red);color:var(--void);font-weight:600}
+.tb.now{border-color:var(--amber);color:var(--amber)}
+.tb.soon{border-color:var(--cyan);color:var(--cyan)}
+.tb.carry{border-style:dashed;border-color:var(--amber);color:var(--amber)}
+.tb.hz{border-color:var(--tc);color:var(--tc)}
+.imp{background:none;border:0;padding:6px 2px 6px 6px;display:flex;gap:3px;align-items:center;min-height:30px}
+.imp i{width:5px;height:12px;background:var(--rule2);display:block}
+.imp i.on{background:var(--amber)}
+.imp i:nth-child(3).on{background:var(--red)}
+.imp:hover i:not(.on){background:var(--faint)}
+.tdacts{grid-column:2/-1;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:8px 0 4px}
+.tdacts[hidden]{display:none}
+.tdacts .seg.hz button{min-height:30px;font-size:11.5px}
+.tplan{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:6px 0 0 28px;font-size:11px}
+.tplan .ghost{font-size:11px;color:var(--dim);padding:0}
+.tplan .ghost:hover{color:var(--amber)}
+.imp-s{color:var(--red);font-weight:700;letter-spacing:.05em}
+.tdfoot{font-size:11px;color:var(--faint);margin:0;max-width:62ch}
+@media (max-width:760px){
+  aside .todaybtn{display:none}
+  li.td{margin:4px 4px;padding:8px 6px 8px 8px}
+  .tdaddrow .btn{margin-left:0;flex:1 1 100%}
+  .tdhead{flex-wrap:wrap}
+}
 /* meetings */
 .mtitle{font-size:15px;color:var(--star);margin-top:2px;overflow-wrap:anywhere}
 .mline{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11.5px;color:var(--dim);margin-top:3px}
@@ -469,6 +551,7 @@ a.fileline:hover{border-color:var(--violet)}
     </div>
     <div class="seg spacef" id="spaceFilter" role="group" aria-label="Prostor"></div>
     <label class="projpick" for="projSelect"><svg class="i"><use href="#i-export"/></svg><select id="projSelect" aria-label="Izberi projekt"></select></label>
+    <button class="todaybtn" id="todayBtn" type="button" aria-current="false" hidden><span class="sun" aria-hidden="true">☀</span><span class="nm">Danes</span><span class="ct" id="todayCt"></span></button>
     <div class="cat-h">PROJEKTI</div>
     <ul id="projects"></ul>
     <button class="btn newp" id="addProj" type="button"><svg class="i"><use href="#i-plus"/></svg>Nov projekt</button>
@@ -485,6 +568,28 @@ a.fileline:hover{border-color:var(--violet)}
 
   <main>
     <div class="wrap">
+      <section id="todayView" hidden aria-labelledby="tdH">
+        <div class="head tdhead">
+          <div>
+            <div class="coord" id="tdCoord">—</div>
+            <h2 id="tdH">Danes</h2>
+            <div class="tdsum" id="tdSum"></div>
+          </div>
+          <div class="seg spacef" id="tdSpace" role="group" aria-label="Prostor"></div>
+        </div>
+        <form class="box tdadd" id="tdAdd" autocomplete="off">
+          <div class="lbl">nova naloga</div>
+          <input id="tdText" placeholder="kaj je treba narediti…" maxlength="2000" aria-label="Nova naloga">
+          <div class="tdaddrow">
+            <select id="tdWhen" aria-label="Kdaj"><option value="danes">☀ danes</option><option value="teden">◷ ta teden</option><option value="dolgorocno">∞ dolgoročno</option><option value="">○ neplanirano</option></select>
+            <label class="due">rok <input type="date" id="tdDue"></label>
+            <select id="tdProj" aria-label="Projekt"></select>
+            <button class="btn primary" type="submit"><svg class="i"><use href="#i-plus"/></svg>Dodaj</button>
+          </div>
+        </form>
+        <div id="tdLists"></div>
+        <p class="tdfoot">»Danes«, »ta teden«, »dolgoročno«, rok in pomembnost so samo tvoji: vsak si načrtuje svoj dan. Kljukica »opravljeno« je skupna za vse v projektu. Nedokončane naloge za danes se same prenesejo v naslednji dan.</p>
+      </section>
       <div class="head">
         <div>
           <div class="coord" id="projCode">—</div>

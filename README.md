@@ -6,6 +6,7 @@ Hosted on GitHub Pages, data in Supabase (free tier is plenty).
 ```
 index.html      the page
 app.js          the app
+manifest.webmanifest, icons/   app icon for browser tabs and the phone home screen
 config.js       your Supabase address and public key  ← you edit this
 .nojekyll       tells GitHub Pages to serve files as they are
 supabase/
@@ -111,6 +112,22 @@ This uses a second Edge Function, `context` (`supabase/functions/context/index.t
 ## To-dos
 
 Tick the box next to a to-do to mark it done (anyone with access to the project can). **skrij opravljene** hides finished ones. Exports show `[x]` / `[ ]`.
+
+## Danes: all your to-dos in one place
+
+**☀ Danes** at the top of the sidebar collects your to-dos from every project, with work (delo) and personal (osebno) kept apart by the switch at the top. The iPhone home-screen app opens straight on it.
+
+- **Sections:** Danes (today), Ta teden (this week), Dolgoročno (long-term, stays until done), Neplanirano (everything else, grouped by project) and Opravljeno danes (done today, with undo).
+- **Click a to-do** to plan it: ☀ danes / ◷ ta teden / ∞ dolgoročno / ○ neplanirano, a due date (rok), or open it in its project. The three bars on the right are your importance (click to cycle 0–3).
+- **Colors and labels:** red *zamuja* (overdue), amber *rok danes* / today, cyan this week, violet long-term. A to-do with a due date moves into Ta teden a week before and into Danes on the day.
+- **Carry-over:** unfinished "today" to-dos stay on today with a counter (*2. dan*, *3. dan*). **prestavi zaostale v ta teden** moves them all at once.
+- **Quick add** on top saves into your Splošno / Aleks – osebno project (or whichever you pick last).
+- **Your plan is yours:** today/this week/long-term, due date and importance are per person. Ticking *done* is shared, as before. In a project's log, to-dos show your plan and have a **☀ na danes** button.
+- **AI:** read links start with a *Plan za danes* section listing the link owner's today and this week (only to-dos inside the link's scope, so personal ones never reach work tools). Agents can add a to-do straight onto your plan: `{"kind": "todo", "text": "...", "when": "danes", "due": "2026-11-21"}`.
+
+## Icon and iPhone home screen
+
+In Safari: **Share → Add to Home Screen**. The app opens full-screen as "Mindmap" with its own icon. A home-screen app keeps its own login, so log in once there.
 
 ## Meetings
 

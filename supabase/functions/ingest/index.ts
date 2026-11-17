@@ -111,6 +111,7 @@ Deno.serve(async (req) => {
       'Give a skill or prompt a short name: `{"kind": "skill", "name": "blog-writer", "text": "..."}`. Sending the same name again creates a new version; once approved it replaces the old one (kept as history). Without a name, the `name:` line of the skill front matter is used, then the file name.',
       `Files: ${Object.keys(FILE_TYPES).join(", ")}; .md/.txt are stored as text. Max ${MAX_FILES} files, 8 MB each.`,
       `Limits: ${MAX_PER_HOUR} entries+files per hour, ${MAX_CHARS} characters per entry.`,
+      'To-do on the owner\'s plan: `{"kind": "todo", "text": "...", "when": "danes" | "teden" | "dolgorocno", "due": "2026-11-21"}` (both optional).',
       'Meeting: `{"kind": "sestanek", "title": "Weekly team meeting", "date": "2026-11-17T10:00", "participants": ["Ana", "Marko"], "summary": "## Povzetek ...", "transcript": "full transcript"}`. The transcript can also be a .vtt, .srt or .txt file. The summary is what AI tools read; keep decisions under `## Odločitve` and tasks under `## Naloge`.',
       "Short, factual entries, in Slovenian if possible. One entry per finished step or problem.",
     ].join("\n"));
@@ -122,6 +123,7 @@ Deno.serve(async (req) => {
   const files: InFile[] = [];
   let fileName = "";
   // meeting fields
+  let when = "", due = "";
   let mTitle = "", mDate = "", mWho: string[] = [], mSummary = "", mTranscript = "", mPrivate = false;
   const whoList = (v: unknown) => (Array.isArray(v) ? v : String(v ?? "").split(/[,;\n]/)).map((x) => String(x).trim().slice(0, 80)).filter(Boolean).slice(0, 40);
   const ct = req.headers.get("content-type") ?? "";
@@ -131,6 +133,7 @@ Deno.serve(async (req) => {
       body = String(j.text ?? j.content ?? j.message ?? "");
       if (j.kind) kind = String(j.kind);
       if (j.name) rawName = String(j.name);
+      when = String(j.when ?? ""); due = String(j.due ?? "");
       mTitle = String(j.title ?? ""); mDate = String(j.date ?? j.meeting_at ?? ""); mWho = whoList(j.participants);
       mSummary = String(j.summary ?? ""); mTranscript = String(j.transcript ?? ""); mPrivate = j.private === true;
       for (const f of Array.isArray(j.files) ? j.files : []) {
@@ -142,6 +145,7 @@ Deno.serve(async (req) => {
       body = String(form.get("text") ?? "");
       if (form.get("kind")) kind = String(form.get("kind"));
       if (form.get("name")) rawName = String(form.get("name"));
+      when = String(form.get("when") ?? ""); due = String(form.get("due") ?? "");
       mTitle = String(form.get("title") ?? ""); mDate = String(form.get("date") ?? ""); mWho = whoList(form.get("participants"));
       mSummary = String(form.get("summary") ?? ""); mTranscript = String(form.get("transcript") ?? ""); mPrivate = form.get("private") === "true";
       for (const v of form.getAll("file")) {
@@ -244,6 +248,16 @@ Deno.serve(async (req) => {
   if (error) {
     if (saved.length) await db.storage.from("files").remove(saved.map((s) => s.path));
     return json({ error: error.message }, 500);
+  }
+
+  // to-dos can go straight onto the link owner's plan
+  if (kind === "todo" && link.created_by && (when || due)) {
+    const horizon = ["danes", "teden", "dolgorocno"].includes(when) ? when : null;
+    const dueOn = /^\d{4}-\d{2}-\d{2}$/.test(due) && !isNaN(Date.parse(due)) ? due : null;
+    if (horizon || dueOn) {
+      const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Ljubljana" }).format(new Date());
+      await db.from("todo_plans").upsert({ user_id: link.created_by, entry_id: data.id, horizon, due_on: dueOn, plan_day: horizon === "danes" ? today : null });
+    }
   }
 
   await db.from("share_links").update({ last_used_at: new Date().toISOString(), use_count: (link.use_count ?? 0) + 1 }).eq("id", link.id);

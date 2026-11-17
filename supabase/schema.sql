@@ -269,6 +269,35 @@ $$;
 revoke all on function public.set_todo_done(uuid, boolean) from public, anon;
 grant execute on function public.set_todo_done(uuid, boolean) to authenticated;
 
+-- ---------- personal planning of to-dos (the "Danes" screen) ----------
+-- each person plans their own day; "done" stays shared on the entry
+create table if not exists public.todo_plans (
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  entry_id   uuid not null references public.entries(id) on delete cascade,
+  horizon    text check (horizon in ('danes','teden','dolgorocno')),   -- null = unplanned
+  plan_day   date,                                                    -- day it was put on "danes" (carry-over counter)
+  due_on     date,                                                    -- personal deadline
+  importance smallint not null default 0 check (importance between 0 and 3),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, entry_id)
+);
+create index if not exists todo_plans_entry_idx on public.todo_plans(entry_id);
+alter table public.todo_plans enable row level security;
+drop policy if exists "own plans: read"   on public.todo_plans;
+drop policy if exists "own plans: add"    on public.todo_plans;
+drop policy if exists "own plans: change" on public.todo_plans;
+drop policy if exists "own plans: remove" on public.todo_plans;
+create policy "own plans: read" on public.todo_plans for select to authenticated
+  using (user_id = auth.uid());
+create policy "own plans: add" on public.todo_plans for insert to authenticated
+  with check (user_id = auth.uid() and exists (select 1 from public.entries e where e.id = entry_id and e.kind = 'todo' and public.can_access(e.project_id)));
+create policy "own plans: change" on public.todo_plans for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid() and exists (select 1 from public.entries e where e.id = entry_id and e.kind = 'todo' and public.can_access(e.project_id)));
+create policy "own plans: remove" on public.todo_plans for delete to authenticated
+  using (user_id = auth.uid());
+grant select, insert, update, delete on public.todo_plans to authenticated;
+
 -- ---------- agents: permanent, reserved identities for AI tools ----------
 create table if not exists public.agents (
   id          uuid primary key default gen_random_uuid(),

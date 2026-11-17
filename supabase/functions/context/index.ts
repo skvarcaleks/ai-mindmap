@@ -27,6 +27,9 @@ const sha256 = async (s: string) => Array.from(new Uint8Array(await crypto.subtl
 
 // minutes use their own ## headings; nest them under the meeting's heading
 const nest = (t: string, by: number) => t.replace(/^(#{1,4})\s/gm, (_, h) => "#".repeat(Math.min(6, h.length + by)) + " ");
+// dates in the owner's time zone
+const localDay = (d = new Date()) => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Ljubljana" }).format(d);
+const dayDiff = (a: string, b: string) => Math.round((Date.parse(a + "T12:00:00Z") - Date.parse(b + "T12:00:00Z")) / 864e5);
 const who = (e: any) => `@${e.author_name ?? "?"}${e.source === "agent" ? " (AI agent)" : e.via ? ` (prek ${e.via})` : ""}`;
 
 Deno.serve(async (req) => {
@@ -91,6 +94,27 @@ Deno.serve(async (req) => {
     `> Za AI: to je zbirka zapiskov, odločitev in navodil, ki jih uporabnik hrani za svoje delo. Uporabi jih kot kontekst. Pri sestankih je zapisnik; celoten transkript odpri samo, če potrebuješ podrobnosti.`,
     "",
   ];
+  // the link owner's own plan: what's on today and this week (only to-dos inside this link's scope)
+  const open = (entries ?? []).filter((e: any) => e.kind === "todo" && !e.done_at && !e.review && !e.superseded_by);
+  if (open.length && link.created_by) {
+    const { data: pl } = await db.from("todo_plans").select("entry_id,horizon,due_on,importance").eq("user_id", link.created_by).in("entry_id", open.map((e: any) => e.id));
+    const { data: owner } = await db.from("profiles").select("username").eq("id", link.created_by).maybeSingle();
+    const T = localDay(), byId = new Map((pl ?? []).map((x: any) => [x.entry_id, x]));
+    const pname = (id: string) => projects?.find((x: any) => x.id === id)?.name ?? "";
+    const rows = open.map((e: any) => {
+      const x: any = byId.get(e.id) ?? {}, dd = x.due_on ? dayDiff(x.due_on, T) : null;
+      const sec = (dd !== null && dd <= 0) || x.horizon === "danes" ? "danes" : (dd !== null && dd <= 6) || x.horizon === "teden" ? "teden" : null;
+      const note = [pname(e.project_id), dd === null ? "" : dd < 0 ? `zamuja ${-dd} d` : dd === 0 ? "rok danes" : `rok ${x.due_on}`, x.importance ? "!".repeat(x.importance) : ""].filter(Boolean).join(" · ");
+      return { sec, imp: x.importance ?? 0, dd: dd ?? 999, line: `- [ ] ${(e.text ?? "").replace(/\n+/g, " / ")} (${note})` };
+    }).filter((r: any) => r.sec);
+    if (rows.length) {
+      const sort = (a: any, b: any) => a.dd - b.dd || b.imp - a.imp;
+      const d = rows.filter((r: any) => r.sec === "danes").sort(sort), w = rows.filter((r: any) => r.sec === "teden").sort(sort);
+      out.push(`## Plan za danes (@${owner?.username ?? "?"}, ${T})`, "");
+      if (d.length) out.push("### Danes", "", ...d.map((r: any) => r.line), "");
+      if (w.length) out.push("### Ta teden", "", ...w.map((r: any) => r.line), "");
+    }
+  }
   for (const p of projects ?? []) {
     // skills/prompts written by agents stay out until the owner approves them
     const all = (entries ?? []).filter((e: any) => e.project_id === p.id);

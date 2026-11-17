@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="512" height="512">
+  <!-- Aleks's AI mindmap: one amber star with four linked stars, drawn on a 32-pixel grid -->
+  <rect width="32" height="32" fill="#03040a"/>
+  <g fill="#454b6b" shape-rendering="crispEdges">
+    <rect x="3" y="15" width="1" height="1"/><rect x="28" y="13" width="1" height="1"/>
+    <rect x="18" y="27" width="1" height="1"/><rect x="13" y="2" width="1" height="1"/>
+    <rect x="21" y="3" width="1" height="1"/><rect x="2" y="27" width="1" height="1"/>
+  </g>
+  <g stroke-width=".55" stroke-linecap="round" fill="none">
+    <path d="M16 15 7.5 7.5" stroke="#7ee0ff" stroke-opacity=".55"/>
+    <path d="M16 15 25.5 9.5" stroke="#e6e9f5" stroke-opacity=".45"/>
+    <path d="M16 15 8.5 24.5" stroke="#c3a6ff" stroke-opacity=".55"/>
+    <path d="M16 15 24.5 23.5" stroke="#ffb454" stroke-opacity=".6"/>
+    <path d="M25.5 9.5 24.5 23.5" stroke="#2c3460" stroke-dasharray="1 1"/>
+  </g>
+  <g shape-rendering="crispEdges">
+    <!-- satellites: small pixel crosses -->
+    <g fill="#7ee0ff"><rect x="7" y="6" width="1" height="3"/><rect x="6" y="7" width="3" height="1"/></g>
+    <g fill="#e6e9f5"><rect x="25" y="8" width="1" height="3"/><rect x="24" y="9" width="3" height="1"/></g>
+    <g fill="#c3a6ff"><rect x="8" y="23" width="1" height="3"/><rect x="7" y="24" width="3" height="1"/></g>
+    <g fill="#ffb454"><rect x="24" y="22" width="1" height="3"/><rect x="23" y="23" width="3" height="1"/></g>
+    <!-- center: amber pixel star with diagonal sparkles and a white core -->
+    <g fill="#ffb454" fill-opacity=".5"><rect x="13" y="12" width="1" height="1"/><rect x="18" y="12" width="1" height="1"/><rect x="13" y="17" width="1" height="1"/><rect x="18" y="17" width="1" height="1"/></g>
+    <rect x="15" y="9" width="2" height="12" fill="#ffb454"/>
+    <rect x="10" y="14" width="12" height="2" fill="#ffb454"/>
+    <rect x="14" y="13" width="4" height="4" fill="#ffb454"/>
+    <rect x="15" y="14" width="2" height="2" fill="#fff4dc"/>
+  </g>
+</svg>
