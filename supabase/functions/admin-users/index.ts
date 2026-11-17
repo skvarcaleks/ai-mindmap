@@ -34,6 +34,8 @@ Deno.serve(async (req) => {
       const password = String(body.password || "");
       if (!/^[a-z0-9._-]{2,30}$/.test(username)) return json({ error: "Neveljavno uporabniško ime." }, 400);
       if (password.length < 6) return json({ error: "Geslo naj ima vsaj 6 znakov." }, 400);
+      const { data: agentTaken } = await admin.from("agents").select("id").eq("name", username).maybeSingle();
+      if (agentTaken) return json({ error: "To ime že uporablja agent." }, 400);
 
       const { data, error } = await admin.auth.admin.createUser({
         email: `${username}@${domain}`,

@@ -264,6 +264,101 @@ main{grid-row:1;min-width:0;min-height:0;overflow:auto;padding-block:22px 40px;p
 .projpick select option{background:var(--ink);color:var(--star)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .loading{color:var(--dim);padding:24px 0}
+/* spaces */
+.spacef{margin-top:16px}
+.spacef button{min-height:28px;font-size:11px;padding:0 9px}
+li.grp{font-size:10px;letter-spacing:.14em;color:var(--dim);padding:12px 6px 4px;border-top:1px dashed var(--rule)}
+li.grp:first-child{border-top:0;padding-top:4px}
+.newproj select,.rename select{background:var(--void);border:1px solid var(--rule2);font-size:12px;padding:0 4px}
+/* markdown (skills, prompts) */
+.md{margin-top:6px;border-left:2px solid var(--c);padding:2px 0 2px 12px;overflow-wrap:anywhere;min-width:0}
+.md .mh{font-weight:600;color:var(--star);margin:12px 0 4px;line-height:1.35}
+.md .mh.l1{font-size:17px;color:var(--c)} .md .mh.l2{font-size:15px} .md .mh.l3{font-size:14px}
+.md p{margin:6px 0}
+.md ul,.md ol{margin:6px 0;padding-left:20px}
+.md li{margin:2px 0}
+.md code{background:rgba(255,255,255,.07);padding:0 4px;font-size:.92em}
+.md pre{background:var(--void);border:1px solid var(--rule2);padding:10px;overflow-x:auto;margin:8px 0;font-size:12.5px;line-height:1.5}
+.md pre code{background:none;padding:0}
+.md blockquote{margin:6px 0;padding-left:10px;border-left:2px solid var(--rule2);color:#c7cbe0}
+.md hr{border:0;border-top:1px dashed var(--rule2);margin:10px 0}
+.md .fm{font-size:11px;color:var(--dim);border:1px dashed var(--rule2);padding:6px 8px;margin-bottom:8px;display:grid;gap:2px}
+.md .fm b{color:var(--c);font-weight:500}
+.md.clamp{max-height:300px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 75%,transparent);mask-image:linear-gradient(#000 75%,transparent)}
+.mdtools{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+/* share links */
+.shnew{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.shnew select{background:var(--void);border:1px solid var(--rule2);font-size:12px;min-height:30px}
+.shlist{display:grid;gap:10px;margin-top:8px}
+.shitem{border:1px solid var(--rule2);padding:10px;display:grid;gap:6px;min-width:0}
+.shitem.off{opacity:.5;border-style:dashed}
+.shitem .url{font-size:11.5px;color:var(--cyan);overflow-wrap:anywhere;user-select:all}
+.shitem .row2{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.shitem .mode{font-size:10px;letter-spacing:.08em;border:1px solid var(--cyan);color:var(--cyan);padding:0 5px}
+.shitem .mode.w{border-color:var(--green);color:var(--green)}
+/* agents */
+.newkey{border:1px solid var(--green);background:rgba(155,229,100,.06);padding:12px;display:grid;gap:6px;margin-bottom:14px}
+.newkey .url{font-size:12px;color:var(--green);overflow-wrap:anywhere;user-select:all}
+.newkey .row2{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.expsel{display:flex;gap:6px;align-items:center;margin-bottom:12px}
+.expsel select{background:var(--void);border:1px solid var(--rule2);font-size:12px;min-height:30px}
+.aglist{display:grid;gap:12px}
+.agcard{border:1px solid var(--rule2);border-left:3px solid var(--ac);padding:10px 12px;display:grid;gap:8px;min-width:0}
+.agcard.off{opacity:.55;border-style:dashed}
+.agcard .top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.agcard .top .spacer{flex:1}
+.agcard .links{display:grid;gap:6px}
+.lrow{display:flex;gap:6px 10px;flex-wrap:wrap;align-items:center;font-size:12px;border-top:1px dashed var(--rule);padding-top:6px}
+.lrow .muted{font-size:11.5px}
+.lrow .mode{font-size:10px;letter-spacing:.08em;border:1px solid var(--cyan);color:var(--cyan);padding:0 5px}
+.lrow .mode.w{border-color:var(--green);color:var(--green)}
+.lrow .spacer{flex:1}
+.agcard .mk{display:flex;gap:6px;flex-wrap:wrap}
+.agedit{display:grid;gap:8px;border-top:1px dashed var(--rule);padding-top:8px}
+.newagent{margin-top:14px;border:1px dashed var(--amber);padding:10px 12px}
+.newagent summary{cursor:pointer;color:var(--amber);display:flex;gap:8px;align-items:center;list-style:none;font-size:13px}
+.newagent summary::-webkit-details-marker{display:none}
+.agform{display:grid;gap:10px;margin-top:10px}
+.agform .two{display:flex;gap:8px;flex-wrap:wrap}
+.agform input,.agform select,.agedit input,.agedit select{flex:1;min-width:150px;background:var(--void);border:1px solid var(--rule2);outline:none;padding:7px 8px;font-size:13px;caret-color:var(--amber)}
+.agform input:focus,.agedit input:focus{border-color:var(--amber)}
+.colors{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.colors button{width:26px;height:26px;border:1px solid var(--rule2);background:var(--sw);padding:0}
+.colors button[aria-pressed="true"]{outline:2px solid var(--star);outline-offset:2px}
+.colors input[type=color]{width:34px;height:28px;padding:0;border:1px solid var(--rule2);background:none;flex:none;min-width:0}
+/* author chips */
+.achip{display:inline-flex;align-items:center;gap:5px;color:var(--ac);font-weight:500}
+.ticon{width:14px;height:14px;border-radius:3px;background:#fff;flex:none;object-fit:contain}
+.mono{width:14px;height:14px;border-radius:3px;display:inline-grid;place-items:center;font-size:9px;font-weight:700;background:var(--ac,var(--dim));color:var(--void);flex:none;line-height:1}
+.entry .meta .person{display:inline-flex;align-items:center;gap:4px;color:var(--star)}
+.entry .meta .person svg.i{width:12px;height:12px}
+.entry .meta .viatag{display:inline-flex;align-items:center;gap:4px;color:var(--dim)}
+#via{background:var(--void);border:1px solid var(--rule2);font-size:12px;min-height:38px;padding:0 6px;max-width:170px}
+.lblin{flex:1;min-width:160px;background:var(--void);border:1px solid var(--rule2);outline:none;padding:6px 8px;font-size:13px;caret-color:var(--amber)}
+.lblin:focus{border-color:var(--amber)}
+/* to-dos */
+.tick{width:20px;height:20px;flex:none;display:inline-grid;place-items:center;border:1px solid var(--red);background:none;color:var(--void);padding:0;margin:2px 8px 0 0;vertical-align:top}
+.tick[aria-pressed="true"]{background:var(--green);border-color:var(--green)}
+.tick[aria-pressed="true"]::after{content:"✓";font-size:13px;line-height:1;font-weight:700}
+.todorow{display:flex;align-items:flex-start;margin-top:2px;min-width:0}
+.todorow .body{margin-top:0;flex:1}
+.entry.done .body{text-decoration:line-through;text-decoration-color:var(--dim);color:var(--dim)}
+.entry.done .glyph{opacity:.4}
+.entry .meta .agent{color:var(--green);border:1px solid var(--green);padding:0 4px;font-size:10px;letter-spacing:.06em}
+.entry .meta .donemeta{color:var(--green)}
+.entry .meta .rvw{color:var(--amber);border:1px dashed var(--amber);padding:0 4px;font-size:10px;letter-spacing:.06em}
+.entry.review{background:repeating-linear-gradient(135deg,transparent 0 10px,color-mix(in srgb,var(--amber) 4%,transparent) 10px 20px)}
+.rvwbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;padding:8px 10px;border:1px dashed color-mix(in srgb,var(--amber) 55%,transparent);color:var(--amber);font-size:12.5px}
+.rvwbar span{flex:1 1 220px;min-width:0}
+.entry .meta .sname{color:var(--star);border:1px solid color-mix(in srgb,var(--c) 50%,transparent);padding:0 5px;font-size:11px}
+.vers{margin-top:10px;font-size:12.5px}
+.vers summary{cursor:pointer;color:var(--dim);list-style:none;display:inline-flex;align-items:center;gap:6px}
+.vers summary::before{content:'▸';transition:transform .15s}
+.vers[open] summary::before{transform:rotate(90deg)}
+.vers .ver{margin-top:8px;padding:8px 10px;border-left:1px dashed color-mix(in srgb,var(--c) 45%,transparent);opacity:.8}
+.vers .vmeta{color:var(--dim);font-size:11px;margin-bottom:4px}
+.hidedone{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);cursor:pointer;min-height:28px}
+.hidedone input{accent-color:var(--amber)}
 a.fileline{text-decoration:none}
 a.fileline:hover{border-color:var(--violet)}
 .gatewrap{position:relative;z-index:2;height:100%;display:grid;place-items:center;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
@@ -298,6 +393,8 @@ a.fileline:hover{border-color:var(--violet)}
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10"/><path d="M8 11V7a4 4 0 018 0v4"/></symbol>
   <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12"/><path d="M4 16V4h12"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14l4-4M8.5 11.5L6 14a3.5 3.5 0 005 5l2.5-2.5M15.5 12.5L18 10a3.5 3.5 0 00-5-5l-2.5 2.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
 </svg>
 
 <canvas id="sky" aria-hidden="true"></canvas>
@@ -351,11 +448,12 @@ a.fileline:hover{border-color:var(--violet)}
       <h1>Aleks's <span>AI</span> <br>mindmap</h1>
       <div class="tag">// a context drop-off, under the stars</div>
     </div>
+    <div class="seg spacef" id="spaceFilter" role="group" aria-label="Prostor"></div>
     <label class="projpick" for="projSelect"><svg class="i"><use href="#i-export"/></svg><select id="projSelect" aria-label="Izberi projekt"></select></label>
     <div class="cat-h">PROJEKTI</div>
     <ul id="projects"></ul>
     <button class="btn newp" id="addProj" type="button"><svg class="i"><use href="#i-plus"/></svg>Nov projekt</button>
-    <form class="newproj" id="newProj"><input id="newProjName" placeholder="ime projekta…" maxlength="60" aria-label="Ime novega projekta"><button class="btn sm primary" type="submit">Ustvari</button></form>
+    <form class="newproj" id="newProj"><input id="newProjName" placeholder="ime projekta…" maxlength="60" aria-label="Ime novega projekta"><select id="newProjSpace" aria-label="Prostor"><option value="osebno">osebno</option><option value="delo">delo</option></select><button class="btn sm primary" type="submit">Ustvari</button></form>
     <div class="usercard">
       <div class="who"><svg class="i"><use href="#i-user"/></svg><b id="whoami">aleks</b><span class="badge" id="roleBadge">admin</span></div>
       <div class="acts">
@@ -372,13 +470,14 @@ a.fileline:hover{border-color:var(--violet)}
         <div>
           <div class="coord" id="projCode">—</div>
           <h2 id="projTitle">—</h2>
-          <form class="rename" id="renameForm" hidden><input id="renameInput" maxlength="80" aria-label="Novo ime projekta"><button class="btn sm primary" type="submit">Shrani</button><button class="btn sm" type="button" id="renameCancel">Prekliči</button></form>
+          <form class="rename" id="renameForm" hidden><input id="renameInput" maxlength="80" aria-label="Novo ime projekta"><select id="renameSpace" aria-label="Prostor"><option value="osebno">osebno</option><option value="delo">delo</option></select><button class="btn sm primary" type="submit">Shrani</button><button class="btn sm" type="button" id="renameCancel">Prekliči</button></form>
           <div class="projtools" id="projTools" hidden>
             <button class="ghost" type="button" id="renameBtn"><svg class="i"><use href="#i-edit"/></svg>Preimenuj</button>
             <button class="ghost danger" type="button" id="delProjBtn"><svg class="i"><use href="#i-trash"/></svg>Izbriši projekt</button>
           </div>
         </div>
         <div class="tools">
+          <button class="btn" id="shareBtn" type="button" title="Agenti in povezave za AI"><svg class="i"><use href="#i-link"/></svg>Agenti</button>
           <button class="btn" id="helpBtn" type="button" aria-label="Kako deluje"><svg class="i"><use href="#i-help"/></svg></button>
           <button class="btn" id="ctxBtn" type="button" title="Celoten projekt kot besedilo, ki ga prilepiš umetni inteligenci"><svg class="i"><use href="#i-export"/></svg>Kontekst za umetno inteligenco</button>
         </div>
@@ -420,7 +519,7 @@ a.fileline:hover{border-color:var(--violet)}
         <div>
           <button class="dropzone" type="button" id="dropzone">
             <svg class="i"><use href="#i-upload"/></svg>
-            <span>Povleci datoteke sem ali <b>izberi datoteke</b><small>slike, PDF, dokumenti · do 8 MB · lahko tudi prilepiš (Ctrl+V)</small></span>
+            <span>Povleci datoteke sem ali <b>izberi datoteke</b><small>slike, PDF, dokumenti · do 8 MB · .md in .txt se uvozita kot besedilo</small></span>
           </button>
           <input type="file" id="file" multiple hidden>
         </div>
@@ -428,6 +527,8 @@ a.fileline:hover{border-color:var(--violet)}
         <div class="bar">
           <button class="btn" type="button" id="micBtn"><svg class="i" id="micIco"><use href="#i-mic"/></svg><span id="micLbl">Narekuj</span></button>
           <select id="lang" aria-label="Jezik narekovanja"><option value="sl-SI">slovenščina</option><option value="en-US">english</option></select>
+          <button class="btn" type="button" id="pasteAi" title="Prilepi odgovor iz AI"><svg class="i"><use href="#i-copy"/></svg>Prilepi iz AI</button>
+          <select id="via" aria-label="Kdo je napisal besedilo"><option value="">napisal sem sam</option><option value="ChatGPT">prek ChatGPT</option><option value="Claude">prek Claude</option><option value="Gemini">prek Gemini</option><option value="Grok">prek Grok</option><option value="Copilot">prek Copilot</option><option value="Perplexity">prek Perplexity</option><option value="AI">prek drugega AI</option></select>
           <span class="spacer"></span>
           <span class="k">Ctrl+Enter</span>
           <button class="btn primary save" type="submit" id="saveBtn" disabled><svg class="i"><use href="#i-send"/></svg>Shrani vnos</button>
@@ -439,6 +540,7 @@ a.fileline:hover{border-color:var(--violet)}
         <div class="filters">
           <label class="search"><svg class="i"><use href="#i-search"/></svg><input id="q" placeholder="Išči po zapiskih in datotekah…" aria-label="Iskanje"></label>
           <div class="seg" id="fkinds" role="group" aria-label="Filter po vrsti"></div>
+          <label class="hidedone"><input type="checkbox" id="hideDone">skrij opravljene</label>
         </div>
         <ul id="feed"></ul>
       </section>
@@ -460,6 +562,40 @@ a.fileline:hover{border-color:var(--violet)}
     <div class="sh"><h3 id="ctxH">Kontekst za umetno inteligenco</h3><button class="ghost" data-close type="button"><svg class="i"><use href="#i-x"/></svg>Zapri</button></div>
     <div class="sb"><pre id="ctxPre"></pre></div>
     <div class="foot"><span>Kopiraj in prilepi v pogovor z umetno inteligenco. Povezave do datotek veljajo 7 dni.</span><button class="btn primary" id="ctxCopy" type="button"><svg class="i"><use href="#i-copy"/></svg>Kopiraj</button></div>
+  </div>
+</div>
+
+<!-- agents & links sheet -->
+<div class="overlay" id="shareSheet" hidden>
+  <div class="sheet box" role="dialog" aria-modal="true" aria-labelledby="shareH">
+    <div class="sh"><h3 id="shareH">Agenti in povezave</h3><button class="ghost" data-close type="button"><svg class="i"><use href="#i-x"/></svg>Zapri</button></div>
+    <div class="sb">
+      <div class="newkey" id="newKey" hidden>
+        <b>Nova povezava je pripravljena. Kopiraj jo zdaj.</b>
+        <span class="muted">Shranjena je samo kot prstni odtis, zato je pozneje ne bo več mogoče prikazati. Če jo izgubiš, jo obnovi.</span>
+        <div class="url" id="newKeyUrl"></div>
+        <div class="row2"><button class="btn sm primary" type="button" id="newKeyCopyInstr"><svg class="i"><use href="#i-copy"/></svg>Kopiraj z navodilom</button><button class="btn sm" type="button" id="newKeyCopy"><svg class="i"><use href="#i-copy"/></svg>Kopiraj povezavo</button><button class="ghost" type="button" id="newKeyHide">Skrij</button></div>
+      </div>
+      <p class="muted" style="margin:0 0 10px">Projekt <b id="shProj"></b> · prostor <b id="shSpace"></b>. Vsak agent ima stalno, rezervirano ime. Povezave lahko potečejo ali jih prekličeš, ime ostane. Službeni agenti (prostor delo) nikoli ne vidijo osebnih projektov.</p>
+      <label class="muted expsel">veljavnost novih povezav <select id="shareExp"><option value="30">30 dni</option><option value="90" selected>90 dni</option><option value="365">1 leto</option></select></label>
+      <div id="agentList" class="aglist"></div>
+      <details class="newagent" id="newAgentBox">
+        <summary><svg class="i"><use href="#i-plus"/></svg>Nov agent</summary>
+        <form id="agentForm" class="agform" autocomplete="off">
+          <div class="two"><input id="agName" placeholder="ime, npr. grok, barabin, claude-delo" maxlength="30" aria-label="Ime agenta" autocapitalize="off">
+            <select id="agSpace" aria-label="Prostor agenta"><option value="delo">delo (službeni)</option><option value="osebno">osebno</option></select></div>
+          <div class="two"><select id="agTool" aria-label="Orodje"></select><input id="agDomain" placeholder="spletna stran orodja, npr. barabin.ai" maxlength="80" hidden aria-label="Spletna stran orodja"></div>
+          <div class="colors" id="agColors" role="group" aria-label="Barva imena"></div>
+          <label class="checks"><input type="checkbox" id="agShared">deljen službeni račun (uporablja ga več ljudi)</label>
+          <input id="agNote" class="lblin" placeholder="opomba (neobvezno), npr. Grok Bot za ADVANA" maxlength="120" aria-label="Opomba">
+          <div class="err" id="agErr"></div>
+          <button class="btn primary" type="submit"><svg class="i"><use href="#i-plus"/></svg>Ustvari agenta</button>
+        </form>
+      </details>
+      <div class="sub-l" id="legacyH" hidden style="margin-top:16px">STAREJŠE POVEZAVE (BREZ AGENTA)</div>
+      <div id="legacyList" class="shlist"></div>
+    </div>
+    <div class="foot"><span>Kdor ima povezavo, lahko z njo dela, kar dovoljuje. Ne deli je javno.</span></div>
   </div>
 </div>
 

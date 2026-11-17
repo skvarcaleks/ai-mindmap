@@ -37,13 +37,23 @@ create table if not exists public.entries (
   id          uuid primary key default gen_random_uuid(),
   project_id  uuid not null references public.projects(id) on delete cascade,
   author      uuid references public.profiles(id) on delete set null default auth.uid(),
-  kind        text not null default 'misel' check (kind in ('misel','odlocitev','todo','povezava','datoteka')),
+  kind        text not null default 'misel',
   text        text not null default '',
   files       jsonb not null default '[]'::jsonb,   -- [{name,type,size,path}]
   created_at  timestamptz not null default now(),
   edited_at   timestamptz
 );
 create index if not exists entries_project_idx on public.entries(project_id, created_at);
+-- entry kinds (skill and prompt hold AI instructions)
+alter table public.entries drop constraint if exists entries_kind_check;
+alter table public.entries add constraint entries_kind_check
+  check (kind in ('misel','odlocitev','todo','povezava','datoteka','skill','prompt'));
+
+-- work / personal space for each project
+alter table public.projects add column if not exists space text not null default 'osebno';
+alter table public.projects drop constraint if exists projects_space_check;
+alter table public.projects add constraint projects_space_check check (space in ('delo','osebno'));
+
 -- the author's name is kept on the entry, so it stays readable even if the account is removed
 alter table public.entries add column if not exists author_name text;
 
@@ -207,6 +217,181 @@ create policy "files read"   on storage.objects for select to authenticated usin
 create policy "files upload" on storage.objects for insert to authenticated with check (bucket_id = 'files' and public.can_access(public.path_project(name)));
 create policy "files delete" on storage.objects for delete to authenticated using (bucket_id = 'files' and public.can_access(public.path_project(name)));
 
+-- ---------- read-only share links (served by the "context" edge function) ----------
+create table if not exists public.share_links (
+  id          uuid primary key default gen_random_uuid(),
+  token       text unique not null default replace(gen_random_uuid()::text,'-','') || replace(gen_random_uuid()::text,'-',''),
+  project_id  uuid references public.projects(id) on delete cascade,
+  space       text check (space in ('delo','osebno')),
+  label       text,
+  created_by  uuid references public.profiles(id) on delete set null default auth.uid(),
+  created_at  timestamptz not null default now(),
+  expires_at  timestamptz,
+  revoked     boolean not null default false,
+  last_used_at timestamptz,
+  check ((project_id is null) <> (space is null))
+);
+alter table public.share_links enable row level security;
+drop policy if exists "share admin read"   on public.share_links;
+drop policy if exists "share admin insert" on public.share_links;
+drop policy if exists "share admin update" on public.share_links;
+drop policy if exists "share admin delete" on public.share_links;
+create policy "share admin read"   on public.share_links for select to authenticated using (public.is_admin());
+create policy "share admin insert" on public.share_links for insert to authenticated with check (public.is_admin() and created_by = auth.uid());
+create policy "share admin update" on public.share_links for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "share admin delete" on public.share_links for delete to authenticated using (public.is_admin());
+
+-- ---------- to-dos and agent entries ----------
+alter table public.entries add column if not exists done_at timestamptz;
+alter table public.entries add column if not exists done_by text;
+alter table public.entries add column if not exists source text;
+alter table public.share_links add column if not exists mode text not null default 'read';
+alter table public.share_links drop constraint if exists share_links_mode_check;
+alter table public.share_links add constraint share_links_mode_check
+  check (mode in ('read','write') and (mode = 'read' or project_id is not null));
+
+create or replace function public.set_author_name() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.author is not null then
+    new.author_name := (select username from public.profiles where id = new.author);
+  end if;
+  return new;
+end $$;
+
+create or replace function public.set_todo_done(eid uuid, done boolean) returns void
+language sql security definer set search_path = public as $$
+  update public.entries
+     set done_at = case when done then now() else null end,
+         done_by = case when done then (select username from public.profiles where id = auth.uid()) else null end
+   where id = eid and kind = 'todo' and public.can_access(project_id);
+$$;
+revoke all on function public.set_todo_done(uuid, boolean) from public, anon;
+grant execute on function public.set_todo_done(uuid, boolean) to authenticated;
+
+-- ---------- agents: permanent, reserved identities for AI tools ----------
+create table if not exists public.agents (
+  id          uuid primary key default gen_random_uuid(),
+  name        text unique not null check (name ~ '^[a-z0-9][a-z0-9._-]{1,29}$'),
+  space       text not null check (space in ('delo','osebno')),
+  color       text not null default '#9be564' check (color ~ '^#[0-9a-fA-F]{6}$'),
+  tool        text,
+  note        text,
+  shared      boolean not null default false,
+  disabled    boolean not null default false,
+  created_by  uuid references public.profiles(id) on delete set null default auth.uid(),
+  created_at  timestamptz not null default now()
+);
+alter table public.agents enable row level security;
+drop policy if exists "agents admin all" on public.agents;
+drop policy if exists "agents seen in my projects" on public.agents;
+create policy "agents admin all" on public.agents for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.entries add column if not exists agent_id uuid references public.agents(id) on delete set null;
+alter table public.entries add column if not exists via text;
+-- skills/prompts written by agents wait for the owner's approval (left out of AI context until then)
+alter table public.entries add column if not exists review boolean not null default false;
+-- named skills/prompts from agents keep versions; older approved versions stay as history
+alter table public.entries add column if not exists skill_name text;
+alter table public.entries add column if not exists version integer;
+alter table public.entries add column if not exists superseded_by uuid references public.entries(id) on delete set null;
+create index if not exists entries_skill_idx on public.entries(project_id, skill_name) where skill_name is not null;
+create policy "agents seen in my projects" on public.agents for select to authenticated
+  using (exists (select 1 from public.entries e where e.agent_id = agents.id and public.can_access(e.project_id)));
+
+create or replace function public.name_taken(n text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where username = lower(n))
+      or exists (select 1 from public.agents where name = lower(n));
+$$;
+create or replace function public.agents_check_name() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.name := lower(new.name);
+  if exists (select 1 from public.profiles where username = new.name) then
+    raise exception 'To ime že uporablja oseba.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists agents_name_guard on public.agents;
+create trigger agents_name_guard before insert or update of name on public.agents
+  for each row execute function public.agents_check_name();
+
+-- links: bound to an agent; only a SHA-256 fingerprint of the key is stored
+alter table public.share_links add column if not exists agent_id uuid references public.agents(id) on delete cascade;
+alter table public.share_links add column if not exists token_hash text unique;
+alter table public.share_links add column if not exists token_hint text;
+alter table public.share_links add column if not exists use_count integer not null default 0;
+
+create or replace function public.add_entry_as(p_agent text, p_project uuid, p_text text, p_kind text default 'misel')
+returns uuid language plpgsql security definer set search_path = public as $$
+declare a public.agents; sp text; new_id uuid;
+begin
+  select * into a from public.agents where name = lower(p_agent);
+  if a.id is null then raise exception 'Agent % ne obstaja.', p_agent; end if;
+  if a.disabled then raise exception 'Agent % je onemogočen.', p_agent; end if;
+  select space into sp from public.projects where id = p_project;
+  if sp is null then raise exception 'Projekt ne obstaja.'; end if;
+  if sp <> a.space then raise exception 'Projekt ni v prostoru agenta %.', p_agent; end if;
+  if p_kind not in ('misel','odlocitev','todo','povezava','skill','prompt') then p_kind := 'misel'; end if;
+  insert into public.entries (project_id, kind, text, author, author_name, agent_id, source, review)
+  values (p_project, p_kind, p_text, null, a.name, a.id, 'agent', p_kind in ('skill','prompt')) returning id into new_id;
+  return new_id;
+end $$;
+revoke all on function public.add_entry_as(text, uuid, text, text) from public, anon, authenticated;
+
+-- direct (connector) writes of a named skill/prompt: select add_entry_as('claude', '<project id>', 'text', 'skill', 'ime-skilla');
+create or replace function public.add_entry_as(p_agent text, p_project uuid, p_text text, p_kind text, p_name text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare a public.agents; sp text; nm text; v integer; new_id uuid;
+begin
+  select * into a from public.agents where name = lower(p_agent);
+  if a.id is null then raise exception 'Agent % ne obstaja.', p_agent; end if;
+  if a.disabled then raise exception 'Agent % je onemogočen.', p_agent; end if;
+  select space into sp from public.projects where id = p_project;
+  if sp is null then raise exception 'Projekt ne obstaja.'; end if;
+  if sp <> a.space then raise exception 'Projekt ni v prostoru agenta %.', p_agent; end if;
+  if p_kind not in ('skill','prompt') then raise exception 'Ime in različice so samo za skill in prompt.'; end if;
+  nm := nullif(left(trim(both '-' from regexp_replace(lower(coalesce(p_name,'')), '[^a-z0-9._-]+', '-', 'g')), 60), '');
+  if nm is null then raise exception 'Manjka ime skilla.'; end if;
+  select coalesce(max(version), 0) + 1 into v from public.entries
+   where project_id = p_project and skill_name = nm and agent_id = a.id;
+  insert into public.entries (project_id, kind, text, author, author_name, agent_id, source, review, skill_name, version)
+  values (p_project, p_kind, p_text, null, a.name, a.id, 'agent', true, nm, v) returning id into new_id;
+  return new_id;
+end $$;
+revoke all on function public.add_entry_as(text, uuid, text, text, text) from public, anon, authenticated;
+
+-- approve a skill/prompt; a named one replaces the earlier versions from the same author (they stay as history)
+create or replace function public.approve_entry(eid uuid) returns integer
+language plpgsql security definer set search_path = public as $$
+declare e public.entries; newer uuid; n integer := 0;
+begin
+  if not public.is_admin() then raise exception 'Samo admin lahko odobri.'; end if;
+  select * into e from public.entries where id = eid;
+  if e.id is null then raise exception 'Vnos ne obstaja.'; end if;
+  update public.entries set review = false where id = eid;
+  if e.skill_name is null then return 0; end if;
+  -- an even newer version is already approved: this one goes straight into history
+  select id into newer from public.entries x
+   where x.project_id = e.project_id and x.skill_name = e.skill_name and x.id <> eid and not x.review
+     and coalesce(x.agent_id::text, x.author_name) is not distinct from coalesce(e.agent_id::text, e.author_name)
+     and x.created_at > e.created_at
+   order by x.created_at desc limit 1;
+  if newer is not null then
+    update public.entries set superseded_by = newer where id = eid;
+    return 0;
+  end if;
+  update public.entries x set superseded_by = eid
+   where x.project_id = e.project_id and x.skill_name = e.skill_name and x.id <> eid
+     and x.created_at < e.created_at
+     and coalesce(x.agent_id::text, x.author_name) is not distinct from coalesce(e.agent_id::text, e.author_name);
+  get diagnostics n = row_count;
+  update public.entries set superseded_by = null where id = eid;
+  return n;
+end $$;
+revoke all on function public.approve_entry(uuid) from public, anon;
+grant execute on function public.approve_entry(uuid) to authenticated;
+
 -- ---------- one readable view for AI assistants ----------
 -- Lets Claude (via the Supabase connector) read everything in one query:
 --   select * from ai_context where project = 'ADVANA – spletna stran';
@@ -216,7 +401,16 @@ select p.name                                   as project,
        e.kind,
        e.author_name                            as author,
        e.text,
-       (select string_agg(f->>'name', ', ') from jsonb_array_elements(e.files) f) as attachments
+       (select string_agg(f->>'name', ', ') from jsonb_array_elements(e.files) f) as attachments,
+       p.space                                  as space,
+       e.done_at,
+       e.source,
+       e.via,
+       (e.agent_id is not null)                 as is_agent,
+       e.review,
+       e.skill_name,
+       e.version
 from public.entries e
 join public.projects p on p.id = e.project_id
+where e.superseded_by is null and not e.review
 order by p.name, e.created_at;

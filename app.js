@@ -14,8 +14,12 @@ const KINDS = [
   { id: 'odlocitev', label: 'odločitev', c: '#ffb454', g: '★', hint: 'Nekaj, kar je dogovorjeno in velja.' },
   { id: 'todo', label: 'za narediti', c: '#ff6b6b', g: '◌', hint: 'Naloga ali odprto vprašanje.' },
   { id: 'povezava', label: 'povezava', c: '#7ee0ff', g: '↗', hint: 'Spletna stran ali vir. Prilepi naslov v besedilo.' },
-  { id: 'datoteka', label: 'datoteka', c: '#c3a6ff', g: '▣', hint: 'Slika, PDF ali dokument. Pripni ga spodaj.' }
+  { id: 'datoteka', label: 'datoteka', c: '#c3a6ff', g: '▣', hint: 'Slika, PDF ali dokument. Pripni ga spodaj.' },
+  { id: 'skill', label: 'skill', c: '#9be564', g: '⚙', hint: 'Navodila za AI (npr. SKILL.md). Pripni .md datoteko ali prilepi besedilo.' },
+  { id: 'prompt', label: 'prompt', c: '#f2a7ff', g: '❯', hint: 'Prompt ali sistemska navodila, ki jih znova uporabljaš.' }
 ];
+const SPACES = { delo: 'delo', osebno: 'osebno' };
+const isDoc = k => k === 'skill' || k === 'prompt';
 const K = Object.fromEntries(KINDS.map(k => [k.id, k]));
 
 /* ---------------- state ---------------- */
@@ -25,6 +29,8 @@ let projects = [];        // [{ id, name, code, created_at, count }]
 let cur = null;           // project id
 let entries = [];         // entries of current project
 let urls = {};            // storage path -> signed url
+let agentsById = {};
+let spaceF = 'vse'; try { spaceF = localStorage.getItem('aimm-space') || 'vse'; } catch (e) {}
 let kind = 'misel', fkind = null, pending = [], editing = null, busy = false, lastLoad = 0;
 
 /* ---------------- helpers ---------------- */
@@ -114,9 +120,9 @@ async function loadMe() {
   return data;
 }
 async function loadProjects() {
-  const { data, error } = await sb.from('projects').select('id,name,code,created_at,entries(count)').order('created_at');
+  const { data, error } = await sb.from('projects').select('id,name,code,space,created_at,entries(count)').order('created_at');
   if (error) throw error;
-  projects = data.map(p => ({ id: p.id, name: p.name, code: p.code, created_at: p.created_at, count: p.entries?.[0]?.count ?? 0 }));
+  projects = data.map(p => ({ id: p.id, name: p.name, code: p.code, space: p.space || 'osebno', created_at: p.created_at, count: p.entries?.[0]?.count ?? 0 }));
   if (!projects.find(p => p.id === cur)) {
     let saved = null; try { saved = localStorage.getItem('aimm-cur-' + me.id); } catch (e) {}
     cur = projects.find(p => p.id === saved)?.id || projects[0]?.id || null;
@@ -126,10 +132,16 @@ async function loadEntries() {
   entries = []; urls = {};
   if (!cur) return;
   const { data, error } = await sb.from('entries')
-    .select('id,project_id,kind,text,files,created_at,edited_at,author,author_name')
+    .select('id,project_id,kind,text,files,created_at,edited_at,author,author_name,done_at,done_by,source,via,agent_id,review,skill_name,version,superseded_by')
     .eq('project_id', cur).order('created_at');
   if (error) throw error;
   entries = data.map(e => ({ ...e, t: new Date(e.created_at).getTime(), files: e.files || [], whoName: e.author_name || 'nekdo' }));
+  const aids = [...new Set(entries.map(e => e.agent_id).filter(Boolean))];
+  agentsById = {};
+  if (aids.length) {
+    const { data: ag } = await sb.from('agents').select('id,name,color,tool').in('id', aids);
+    (ag || []).forEach(a => { agentsById[a.id] = a; });
+  }
   const paths = entries.flatMap(e => e.files.map(f => f.path)).filter(Boolean);
   if (paths.length) {
     const { data: signed, error: se } = await sb.storage.from(BUCKET).createSignedUrls(paths, 60 * 60 * 6);
@@ -141,19 +153,89 @@ async function loadEntries() {
 }
 const fileUrl = (f, download) => { const u = urls[f.path]; if (!u) return '#'; return download ? u + (u.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(f.name) : u; };
 
+/* ---------------- markdown (skills & prompts) ---------------- */
+function inlineMd(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+}
+function md(src) {
+  let text = src.replace(/\r\n/g, '\n'), out = '';
+  const fm = text.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (fm) {
+    out += '<div class="fm">' + fm[1].split('\n').filter(Boolean).map(l => { const m = l.match(/^([\w-]+):\s*(.*)$/); return m ? `<span><b>${esc(m[1])}</b> ${esc(m[2])}</span>` : `<span>${esc(l)}</span>`; }).join('') + '</div>';
+    text = text.slice(fm[0].length);
+  }
+  const lines = text.split('\n'); let i = 0, para = [], list = null;
+  const flush = () => { if (para.length) { out += `<p>${para.map(inlineMd).join('<br>')}</p>`; para = []; } if (list) { out += `</${list}>`; list = null; } };
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) { flush(); const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); out += `<pre><code>${esc(buf.join('\n'))}</code></pre>`; i++; continue; }
+    let m;
+    if ((m = l.match(/^(#{1,6})\s+(.*)$/))) { flush(); out += `<div class="mh l${Math.min(m[1].length, 3)}">${inlineMd(m[2])}</div>`; }
+    else if (/^\s*(---|\*\*\*)\s*$/.test(l)) { flush(); out += '<hr>'; }
+    else if ((m = l.match(/^\s*[-*+]\s+(.*)$/))) { if (para.length) { const l2 = list; list = null; flush(); list = l2; } if (list !== 'ul') { if (list) out += `</${list}>`; out += '<ul>'; list = 'ul'; } out += `<li>${inlineMd(m[1])}</li>`; }
+    else if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))) { if (para.length) { const l2 = list; list = null; flush(); list = l2; } if (list !== 'ol') { if (list) out += `</${list}>`; out += '<ol>'; list = 'ol'; } out += `<li>${inlineMd(m[1])}</li>`; }
+    else if ((m = l.match(/^>\s?(.*)$/))) { flush(); out += `<blockquote>${inlineMd(m[1])}</blockquote>`; }
+    else if (!l.trim()) { flush(); }
+    else { if (list) { out += `</${list}>`; list = null; } para.push(l); }
+    i++;
+  }
+  flush();
+  return out;
+}
+function docTitle(t) {
+  const fm = t.match(/^---\n[\s\S]*?\bname:\s*(.+)\n[\s\S]*?---/);
+  if (fm) return fm[1].trim();
+  const h = t.match(/^#{1,3}\s+(.+)$/m);
+  return (h ? h[1] : t.split('\n')[0]).trim().slice(0, 60);
+}
+function copyText(t, msg) {
+  navigator.clipboard.writeText(t).then(() => toast(msg), () => toast('kopiranje ni uspelo, označi besedilo ročno'));
+}
+function downloadMd(t) {
+  const name = (docTitle(t).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'skill') + '.md';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([t], { type: 'text/markdown;charset=utf-8' }));
+  a.download = name; document.body.append(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
 /* ---------------- render: sidebar ---------------- */
 function renderProjects() {
   const ul = $('#projects'); ul.innerHTML = '';
   if (!projects.length) ul.innerHTML = `<li class="muted" style="padding:8px 0">${me.is_admin || me.can_create ? 'Še ni projektov. Ustvari prvega spodaj.' : 'Še nimaš dostopa do nobenega projekta. Prosi Aleksa, da ti ga dodeli.'}</li>`;
-  projects.forEach((p, i) => {
-    const li = document.createElement('li'); const on = p.id === cur;
-    li.innerHTML = `<button class="proj" type="button" aria-current="${on}"><span class="mk">${on ? '▸' : String(i + 1).padStart(2, '0')}</span><span class="nm">${esc(p.name)}</span><span class="ct">${p.count}★</span></button>`;
-    li.querySelector('button').onclick = () => selectProject(p.id);
-    ul.append(li);
+  const spaces = spaceF === 'vse' ? ['delo', 'osebno'] : [spaceF];
+  const hasBoth = new Set(projects.map(p => p.space)).size > 1;
+  let n = 0;
+  spaces.forEach(sp => {
+    const list = projects.filter(p => p.space === sp);
+    if (!list.length) return;
+    if (spaceF === 'vse' && hasBoth) { const g = document.createElement('li'); g.className = 'grp'; g.textContent = sp.toUpperCase(); ul.append(g); }
+    list.forEach(p => {
+      const li = document.createElement('li'); const on = p.id === cur; n++;
+      li.innerHTML = `<button class="proj" type="button" aria-current="${on}"><span class="mk">${on ? '▸' : String(n).padStart(2, '0')}</span><span class="nm">${esc(p.name)}</span><span class="ct">${p.count}★</span></button>`;
+      li.querySelector('button').onclick = () => selectProject(p.id);
+      ul.append(li);
+    });
   });
+  if (projects.length && !n) ul.innerHTML = `<li class="muted" style="padding:8px 0">V prostoru »${spaceF}« še ni projektov.</li>`;
   const sel = $('#projSelect');
-  sel.innerHTML = projects.length ? projects.map(p => `<option value="${p.id}"${p.id === cur ? ' selected' : ''}>${esc(p.name)} · ${p.count}★</option>`).join('') : '<option value="">ni projektov</option>';
-  sel.disabled = !projects.length;
+  const opt = p => `<option value="${p.id}"${p.id === cur ? ' selected' : ''}>${esc(p.name)} · ${p.count}★</option>`;
+  const vis = projects.filter(p => spaceF === 'vse' || p.space === spaceF);
+  sel.innerHTML = !vis.length ? '<option value="">ni projektov</option>'
+    : (spaceF === 'vse' && hasBoth) ? spaces.map(sp => `<optgroup label="${sp.toUpperCase()}">${vis.filter(p => p.space === sp).map(opt).join('')}</optgroup>`).join('')
+    : vis.map(opt).join('');
+  if (cur && !vis.some(p => p.id === cur)) sel.insertAdjacentHTML('afterbegin', `<option value="" selected disabled>izberi projekt…</option>`);
+  sel.disabled = !vis.length;
+  const sf = $('#spaceFilter');
+  sf.hidden = !hasBoth && spaceF === 'vse';
+  seg(sf, [{ id: 'vse', label: 'vse', c: '#e6e9f5', g: '∗' }, { id: 'delo', label: 'delo', c: '#7ee0ff', g: '◆' }, { id: 'osebno', label: 'osebno', c: '#ffb454', g: '●' }],
+    x => x.id === spaceF, x => { spaceF = x.id; try { localStorage.setItem('aimm-space', spaceF); } catch (e) {} renderProjects(); });
+  $('#shareBtn').hidden = !me.is_admin || !P();
   $('#addProj').hidden = !(me.can_create || me.is_admin) || $('#newProj').classList.contains('on');
   $('#adminBtn').hidden = !me.is_admin;
   $('#whoami').textContent = me.username;
@@ -193,7 +275,8 @@ function filesHtml(files) {
 function renderFeed() {
   const p = P(), ul = $('#feed'); ul.innerHTML = ''; if (!p) return;
   const q = $('#q').value.trim().toLowerCase();
-  const list = entries.map((e, i) => ({ e, i })).filter(({ e }) => (!fkind || e.kind === fkind) && (!q || (e.text || '').toLowerCase().includes(q) || e.files.some(f => f.name.toLowerCase().includes(q)))).reverse();
+  const hideDone = $('#hideDone').checked;
+  const list = entries.map((e, i) => ({ e, i })).filter(({ e }) => !e.superseded_by && !(hideDone && e.done_at) && (!fkind || e.kind === fkind) && (!q || (e.text || '').toLowerCase().includes(q) || e.files.some(f => f.name.toLowerCase().includes(q)))).reverse();
   if (!list.length) {
     ul.innerHTML = entries.length
       ? `<li class="empty"><b>Ni zadetkov.</b><span>Poskusi drugo besedo ali izberi filter »vse«.</span></li>`
@@ -202,15 +285,42 @@ function renderFeed() {
   }
   list.forEach(({ e, i }) => {
     const k = K[e.kind] || K.misel, li = document.createElement('li');
-    li.className = 'entry'; li.id = 'e-' + e.id; li.style.setProperty('--c', k.c);
+    li.className = 'entry' + (e.done_at ? ' done' : '') + (e.review ? ' review' : ''); li.id = 'e-' + e.id; li.style.setProperty('--c', k.c);
     const mine = e.author === me.id || me.is_admin;
+    const older = e.skill_name ? entries.filter(x => x.superseded_by === e.id).sort((a, b) => b.t - a.t) : [];
+    const live = e.review && e.skill_name ? entries.find(x => x.id !== e.id && x.skill_name === e.skill_name && x.agent_id === e.agent_id && !x.review && !x.superseded_by) : null;
     li.innerHTML = `<span class="glyph" aria-hidden="true">${k.g}</span><div style="min-width:0">
-      <div class="meta"><span>${stamp(e.t)}</span><span>${catalog(p, i)}</span><span class="cat">${k.label}</span><span class="who">@${esc(e.whoName)}</span>${e.edited_at ? '<span>· urejeno</span>' : ''}</div>
+      <div class="meta"><span>${stamp(e.t)}</span><span>${catalog(p, i)}</span><span class="cat">${k.label}</span>${e.skill_name ? `<span class="sname">${esc(e.skill_name)}${e.version ? ` · v${e.version}` : ''}</span>` : ''}${e.source === 'agent'
+        ? `${agentChip(agentsById[e.agent_id] || { name: e.whoName })}<span class="agent">AGENT</span>${e.review ? '<span class="rvw">ZA PREGLED</span>' : ''}`
+        : `<span class="person">${ico('user')}@${esc(e.whoName)}</span>${e.via ? `<span class="viatag">· prek ${VIA_TOOL[e.via] ? toolIcon(VIA_TOOL[e.via], e.via) : ''}${esc(e.via)}</span>` : ''}`}${e.edited_at ? '<span>· urejeno</span>' : ''}${e.done_at ? `<span class="donemeta">✓ ${e.done_by ? '@' + esc(e.done_by) + ' ' : ''}${esc(ago(e.done_at))}</span>` : ''}</div>
       ${editing === e.id
         ? `<div class="edit"><textarea aria-label="Uredi vnos">${esc(e.text)}</textarea><div class="eb"><button class="btn sm primary" type="button" data-save>Shrani</button><button class="btn sm" type="button" data-cancel>Prekliči</button></div></div>`
-        : (e.text ? `<div class="body">${linkify(e.text)}</div>` : '')}
+        : (e.text ? (isDoc(e.kind)
+            ? `<div class="md${e.text.length > 1200 || e.text.split('\n').length > 18 ? ' clamp' : ''}">${md(e.text)}</div><div class="mdtools">${(e.text.length > 1200 || e.text.split('\n').length > 18) ? `<button class="btn sm" type="button" data-more>Pokaži vse</button>` : ''}<button class="btn sm" type="button" data-copy>${ico('copy')}Kopiraj</button><button class="btn sm" type="button" data-dl>${ico('down')}Prenesi .md</button></div>`
+            : e.kind === 'todo'
+              ? `<div class="todorow"><button class="tick" type="button" data-tick aria-pressed="${!!e.done_at}" aria-label="${e.done_at ? 'Označi kot neopravljeno' : 'Označi kot opravljeno'}"></button><div class="body">${linkify(e.text)}</div></div>`
+              : `<div class="body">${linkify(e.text)}</div>`) : '')}
       ${e.files.length ? filesHtml(e.files) : ''}
+      ${older.length ? `<details class="vers"><summary>Prejšnje različice (${older.length})</summary>${older.map(v => `<div class="ver"><div class="vmeta">${v.version ? 'v' + v.version + ' · ' : ''}${stamp(v.t)}</div><div class="md clamp">${md(v.text || '')}</div><div class="mdtools"><button class="btn sm" type="button" data-vcopy="${v.id}">${ico('copy')}Kopiraj</button><button class="btn sm" type="button" data-vdl="${v.id}">${ico('down')}Prenesi .md</button></div></div>`).join('')}</details>` : ''}
+      ${e.review ? `<div class="rvwbar"><span>${live
+        ? `Nova različica${e.version ? ' v' + e.version : ''} za »${esc(e.skill_name)}«. Ko jo odobriš, nadomesti trenutno${live.version ? ' (v' + live.version + ')' : ''}, ta pa ostane med prejšnjimi različicami.`
+        : `Agent je predlagal ${e.kind === 'prompt' ? 'prompt' : 'skill'}. Dokler ga ne odobriš, ga AI ne vidi v kontekstu.`}</span>${me.is_admin ? `<button class="btn sm primary" type="button" data-ok>Odobri</button><button class="btn sm" type="button" data-no>Zavrni</button>` : ''}</div>` : ''}
     </div>${mine ? `<div class="acts"><button class="ghost" type="button" data-edit aria-label="Uredi">${ico('edit')}</button><button class="ghost danger" type="button" data-del aria-label="Izbriši">${ico('trash')}</button></div>` : '<span></span>'}`;
+    if (editing !== e.id && isDoc(e.kind) && e.text) {
+      const box = li.querySelector('.md'), more = li.querySelector('[data-more]');
+      if (more) more.onclick = () => { const c = box.classList.toggle('clamp'); more.textContent = c ? 'Pokaži vse' : 'Skrči'; };
+      li.querySelector('[data-copy]').onclick = () => copyText(e.text, 'kopirano');
+      li.querySelector('[data-dl]').onclick = () => downloadMd(e.text);
+    }
+    li.querySelectorAll('[data-vcopy]').forEach(b => b.onclick = () => copyText(entries.find(x => x.id === b.dataset.vcopy)?.text || '', 'kopirano'));
+    li.querySelectorAll('[data-vdl]').forEach(b => b.onclick = () => downloadMd(entries.find(x => x.id === b.dataset.vdl)?.text || ''));
+    const ok = li.querySelector('[data-ok]');
+    if (ok) {
+      ok.onclick = () => approveEntry(e);
+      confirmBtn(li.querySelector('[data-no]'), 'Res zavrni?', () => deleteEntry(e));
+    }
+    const tick = li.querySelector('[data-tick]');
+    if (tick) tick.onclick = () => toggleDone(e);
     const imgs = e.files.filter(isImg);
     li.querySelectorAll('[data-img]').forEach(b => b.onclick = () => openLightbox(imgs[+b.dataset.img]));
     if (mine) {
@@ -226,18 +336,44 @@ function renderFeed() {
     ul.append(li);
   });
 }
+async function approveEntry(e) {
+  const { data: replaced, error } = await sb.rpc('approve_entry', { eid: e.id });
+  if (error) return fail('odobritev', error);
+  try { await loadEntries(); } catch (x) { fail('osvežitev', x); }
+  renderAll(); toast(replaced ? 'odobreno, stara različica je med prejšnjimi' : 'odobreno, AI ga zdaj vidi');
+}
+async function toggleDone(e) {
+  const done = !e.done_at;
+  const { error } = await sb.rpc('set_todo_done', { eid: e.id, done });
+  if (error) return fail('opravljeno', error);
+  e.done_at = done ? new Date().toISOString() : null; e.done_by = done ? me.username : null;
+  renderFeed(); toast(done ? 'opravljeno ✓' : 'spet odprto');
+}
+$('#hideDone').onchange = () => { try { localStorage.setItem('aimm-hidedone', $('#hideDone').checked ? '1' : ''); } catch (e) {} renderFeed(); };
+try { $('#hideDone').checked = localStorage.getItem('aimm-hidedone') === '1'; } catch (e) {}
 async function updateEntry(e, text) {
   const { error } = await sb.from('entries').update({ text, edited_at: new Date().toISOString() }).eq('id', e.id);
   if (error) return fail('urejanje', error);
   e.text = text; e.edited_at = new Date().toISOString(); editing = null; renderFeed(); toast('shranjeno');
 }
 async function deleteEntry(e) {
+  // deleting the current version of a skill brings back the newest previous one
+  const older = e.skill_name && !e.superseded_by ? entries.filter(x => x.superseded_by === e.id).sort((a, b) => b.t - a.t) : [];
+  if (older.length) {
+    const back = older.find(x => !x.review) || older[0];
+    const r1 = await sb.from('entries').update({ superseded_by: null }).eq('id', back.id);
+    if (r1.error) return fail('brisanje', r1.error);
+    const r2 = await sb.from('entries').update({ superseded_by: back.id }).eq('superseded_by', e.id).neq('id', back.id);
+    if (r2.error) return fail('brisanje', r2.error);
+  }
   const paths = e.files.map(f => f.path).filter(Boolean);
   const { error } = await sb.from('entries').delete().eq('id', e.id);
   if (error) return fail('brisanje', error);
   if (paths.length) { const { error: se } = await sb.storage.from(BUCKET).remove(paths); if (se) console.warn(se); }
-  entries = entries.filter(x => x.id !== e.id); const p = P(); if (p) p.count = entries.length;
-  renderAll(); toast('vnos izbrisan');
+  if (older.length) { try { await loadEntries(); } catch (x) { console.warn(x); } }
+  else entries = entries.filter(x => x.id !== e.id);
+  const p = P(); if (p) p.count = entries.length;
+  renderAll(); toast(older.length ? 'izbrisano, vrnjena prejšnja različica' : 'vnos izbrisan');
 }
 
 /* ---------------- render: chart ---------------- */
@@ -264,7 +400,9 @@ function renderChart() {
   c.strokeStyle = 'rgba(255,180,84,.55)'; c.lineWidth = 1; c.beginPath(); o.forEach((q, i) => i ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y)); c.stroke();
   o.forEach(q => {
     const col = (K[q.e.kind] || K.misel).c, s = 2 + Math.min(2, (q.e.text || '').length / 150) + (q.e.files.length ? 1 : 0);
-    c.fillStyle = col; c.globalAlpha = .25; c.fillRect(q.x - s * 2, q.y - s * 2, s * 4, s * 4); c.globalAlpha = 1;
+    c.fillStyle = col; c.strokeStyle = col;
+    if (q.e.source === 'agent') { c.globalAlpha = .9; c.lineWidth = 1; c.strokeRect(q.x - s, q.y - s, s * 2, s * 2); c.globalAlpha = 1; return; }
+    c.globalAlpha = .25; c.fillRect(q.x - s * 2, q.y - s * 2, s * 4, s * 4); c.globalAlpha = 1;
     c.fillRect(q.x - s / 2, q.y - s / 2, s, s); c.fillRect(q.x - .5, q.y - s * 1.6, 1, s * 3.2); c.fillRect(q.x - s * 1.6, q.y - .5, s * 3.2, 1);
   });
 }
@@ -290,7 +428,7 @@ function renderHead() {
   if (p) {
     const i = projects.indexOf(p), g = rnd(p.id);
     $('#projTitle').textContent = p.name;
-    $('#projCode').textContent = `${p.code}-${pad(i + 1)} · RA ${pad(Math.floor(g() * 24))}h ${pad(Math.floor(g() * 60))}m · DEC +${pad(Math.floor(g() * 80))}°`;
+    $('#projCode').textContent = `${p.space.toUpperCase()} · ${p.code}-${pad(i + 1)} · RA ${pad(Math.floor(g() * 24))}h ${pad(Math.floor(g() * 60))}m · DEC +${pad(Math.floor(g() * 80))}°`;
     $('#chartLbl').innerHTML = `star chart · <b>${p.count}</b> vnosov · čas →`; $('#slProj').textContent = p.name;
   } else { $('#projTitle').textContent = 'Ni projekta'; $('#projCode').textContent = '—'; $('#slProj').textContent = '—'; }
   $('#slCount').textContent = projects.reduce((a, x) => a + x.count, 0) + ' ★ skupaj';
@@ -338,12 +476,13 @@ $('#helpBtn').onclick = () => { $('#howto').hidden = !$('#howto').hidden; };
 
 /* ---------------- projects ---------------- */
 function closeNewProj() { $('#newProj').classList.remove('on'); $('#addProj').hidden = false; }
-$('#addProj').onclick = () => { $('#newProj').classList.add('on'); $('#addProj').hidden = true; $('#newProjName').focus(); };
+$('#addProj').onclick = () => { $('#newProjSpace').value = spaceF === 'vse' ? 'osebno' : spaceF; $('#newProj').classList.add('on'); $('#addProj').hidden = true; $('#newProjName').focus(); };
 $('#newProjName').addEventListener('keydown', e => { if (e.key === 'Escape') closeNewProj(); });
 $('#newProj').addEventListener('submit', async ev => {
   ev.preventDefault(); const n = $('#newProjName').value.trim(); if (!n) return;
   const code = (n.normalize('NFD').replace(/[^A-Za-z]/g, '').slice(0, 3) || 'NEW').toUpperCase();
-  const { data, error } = await sb.from('projects').insert({ name: n, code, created_by: me.id }).select('id').single();
+  const space = $('#newProjSpace').value;
+  const { data, error } = await sb.from('projects').insert({ name: n, code, space, created_by: me.id }).select('id').single();
   if (error) return fail('nov projekt', error);
   $('#newProjName').value = ''; closeNewProj();
   await loadProjects(); await selectProject(data.id);
@@ -352,8 +491,18 @@ $('#newProj').addEventListener('submit', async ev => {
 
 /* ---------------- composer ---------------- */
 function updateSave() { $('#saveBtn').disabled = busy || (!$('#text').value.trim() && !pending.length); }
+const TEXT_FILE = /\.(md|markdown|txt)$/i;
+async function importText(f) {
+  const t = (await f.text()).replace(/\r\n/g, '\n').trim();
+  const ta = $('#text');
+  ta.value = ta.value.trim() ? ta.value.trim() + '\n\n---\n\n' + t : t;
+  if (/\.(md|markdown)$/i.test(f.name) && !isDoc(kind)) { kind = 'skill'; renderKinds(); }
+  $('#status').textContent = `Besedilo iz ${f.name} je v polju zgoraj. Preglej ga in pritisni Shrani vnos.`;
+  updateSave();
+}
 function addFiles(list) {
   [...list].forEach(f => {
+    if (TEXT_FILE.test(f.name) && f.size < 1048576) { importText(f).catch(e => fail('uvoz', e)); return; }
     if (f.size > MAX_FILE) { toast(f.name + ' je večja od 8 MB'); return; }
     const item = { file: f, name: f.name, type: f.type || 'application/octet-stream', size: f.size, preview: isImg(f) ? URL.createObjectURL(f) : null };
     pending.push(item);
@@ -394,19 +543,34 @@ comp.addEventListener('submit', async ev => {
       uploaded.push({ name: f.name, type: f.type, size: f.size, path });
     }
     $('#status').textContent = 'shranjujem…';
-    const { error } = await sb.from('entries').insert({ project_id: projectId, kind: k, text, files: uploaded, author: me.id });
+    const { error } = await sb.from('entries').insert({ project_id: projectId, kind: k, text, files: uploaded, author: me.id, via: $('#via').value || null });
     if (error) throw error;
   } catch (e) {
     if (uploaded.length) await sb.storage.from(BUCKET).remove(uploaded.map(u => u.path));
     busy = false; $('#status').textContent = ''; updateSave(); return fail('shranjevanje', e);
   }
   pending.forEach(f => f.preview && URL.revokeObjectURL(f.preview));
-  pending = []; $('#text').value = ''; renderPending(); $('#status').textContent = '';
+  pending = []; $('#text').value = ''; $('#via').value = ''; renderPending(); $('#status').textContent = '';
   busy = false; fkind = null; $('#q').value = '';
   if (cur === projectId) { try { await loadEntries(); } catch (e) { fail('osvežitev', e); } }
   renderAll(); toast('vnos shranjen ★'); if (!reduce) meteor();
   const first = $('#feed .entry'); first?.classList.add('flash'); setTimeout(() => first?.classList.remove('flash'), 1400);
 });
+
+/* ---------------- paste from AI ---------------- */
+$('#pasteAi').onclick = async () => {
+  if ($('#via').value === '') $('#via').value = 'AI';
+  try {
+    const t = (await navigator.clipboard.readText()).trim();
+    if (!t) throw new Error('empty');
+    const ta = $('#text'); ta.value = ta.value.trim() ? ta.value.trim() + '\n\n' + t : t; updateSave();
+    $('#status').textContent = 'Prilepljeno. Izberi, iz katerega AI je besedilo, in pritisni Shrani vnos.';
+    $('#via').focus();
+  } catch (e) {
+    $('#text').focus();
+    $('#status').textContent = 'Brskalnik ne dovoli branja odložišča. Prilepi z Ctrl+V (na telefonu: dolg pritisk → Prilepi) in izberi vir.';
+  }
+};
 
 /* ---------------- speech to text ---------------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -437,12 +601,14 @@ function openLightbox(f) { $('#lbImg').src = fileUrl(f); $('#lbImg').alt = f.nam
 
 /* context export */
 function contextMd(p, links = {}) {
-  const L = [`# ${p.name}`, `> izvoz iz Aleks's AI mindmap · ${stamp(Date.now())} · ${entries.length} vnosov`, ''];
+  const ok = entries.filter(e => !e.review && !e.superseded_by);  // only approved, current versions
+  const L = [`# ${p.name}`, `> izvoz iz Aleks's AI mindmap · prostor: ${p.space} · ${stamp(Date.now())} · ${ok.length} vnosov`, ''];
   KINDS.forEach(k => {
-    const es = entries.filter(e => e.kind === k.id); if (!es.length) return;
+    const es = ok.filter(e => e.kind === k.id); if (!es.length) return;
     L.push(`## ${k.label}`);
     es.sort((a, b) => a.t - b.t).forEach(e => {
-      L.push(`- [${stamp(e.t)} @${e.whoName}] ${(e.text || '').replace(/\n/g, ' / ')}`);
+      const box = e.kind === 'todo' ? (e.done_at ? '[x] ' : '[ ] ') : '';
+      L.push(`- ${box}[${stamp(e.t)} @${e.whoName}] ${(e.text || '').replace(/\n/g, ' / ')}${e.done_at ? ` (opravljeno ${stamp(e.done_at)})` : ''}`);
       e.files.forEach(f => L.push(`  - priponka: ${f.name}${links[f.path] ? ' → ' + links[f.path] : ''}`));
     });
     L.push('');
@@ -451,7 +617,7 @@ function contextMd(p, links = {}) {
 }
 $('#ctxBtn').onclick = async () => {
   $('#ctxPre').textContent = '> pripravljam…'; openSheet('#ctxSheet', '#ctxCopy');
-  const paths = entries.flatMap(e => e.files.map(f => f.path)).filter(Boolean);
+  const paths = entries.filter(e => !e.review && !e.superseded_by).flatMap(e => e.files.map(f => f.path)).filter(Boolean);
   let links = {};
   if (paths.length) {
     const { data } = await sb.storage.from(BUCKET).createSignedUrls(paths, 60 * 60 * 24 * 7);
@@ -610,7 +776,7 @@ $('#pwForm').addEventListener('submit', async ev => {
 $('#renameBtn').onclick = () => {
   const p = P(); if (!p) return;
   $('#projTitle').hidden = true; $('#projTools').hidden = true; $('#renameForm').hidden = false;
-  $('#renameInput').value = p.name; $('#renameInput').select();
+  $('#renameInput').value = p.name; $('#renameSpace').value = p.space; $('#renameInput').select();
 };
 function closeRename() { $('#renameForm').hidden = true; $('#projTitle').hidden = false; renderHead(); }
 $('#renameCancel').onclick = closeRename;
@@ -618,9 +784,10 @@ $('#renameInput').addEventListener('keydown', e => { if (e.key === 'Escape') clo
 $('#renameForm').addEventListener('submit', async ev => {
   ev.preventDefault();
   const p = P(), n = $('#renameInput').value.trim(); if (!p || !n) return;
-  const { error } = await sb.from('projects').update({ name: n }).eq('id', p.id);
+  const space = $('#renameSpace').value;
+  const { error } = await sb.from('projects').update({ name: n, space }).eq('id', p.id);
   if (error) return fail('preimenovanje', error);
-  p.name = n; closeRename(); renderProjects(); toast('projekt preimenovan');
+  p.name = n; p.space = space; closeRename(); renderProjects(); toast('projekt shranjen');
 });
 $('#delProjBtn').onclick = () => {
   const p = P(); if (!p) return;
@@ -649,6 +816,181 @@ $('#delGo').onclick = async () => {
   } catch (e) { fail('brisanje projekta', e); }
   btn.lastChild.textContent = 'Izbriši za vedno'; btn.disabled = !$('#delAck').checked;
 };
+
+/* ---------------- agents & links ---------------- */
+const TOOLS = {
+  claude: { label: 'Claude', domain: 'claude.ai' },
+  chatgpt: { label: 'ChatGPT', domain: 'chatgpt.com' },
+  gemini: { label: 'Gemini', domain: 'gemini.google.com' },
+  grok: { label: 'Grok', domain: 'grok.com' },
+  copilot: { label: 'Copilot', domain: 'copilot.microsoft.com' },
+  perplexity: { label: 'Perplexity', domain: 'perplexity.ai' },
+  n8n: { label: 'n8n', domain: 'n8n.io' },
+};
+const VIA_TOOL = { ChatGPT: 'chatgpt', Claude: 'claude', Gemini: 'gemini', Grok: 'grok', Copilot: 'copilot', Perplexity: 'perplexity' };
+const COLORS = ['#9be564', '#7ee0ff', '#ffb454', '#f2a7ff', '#ff6b6b', '#d97757', '#c3a6ff', '#e6e9f5'];
+const toolDomain = t => !t ? null : t.startsWith('domain:') ? t.slice(7) : TOOLS[t]?.domain || null;
+const toolLabel = t => !t ? '' : t.startsWith('domain:') ? t.slice(7) : TOOLS[t]?.label || t;
+// the tool's own website icon (like a browser tab icon); a coloured letter if it doesn't load
+function toolIcon(tool, name, color) {
+  const d = toolDomain(tool), letter = esc((name || '?')[0].toUpperCase());
+  return d ? `<img class="ticon" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64" alt="" data-letter="${letter}" loading="lazy">`
+           : `<span class="mono" style="--ac:${esc(color || '#9be564')}">${letter}</span>`;
+}
+document.addEventListener('error', e => {
+  const img = e.target;
+  if (img && img.classList && img.classList.contains('ticon')) {
+    const s = document.createElement('span'); s.className = 'mono'; s.textContent = img.dataset.letter || '?'; img.replaceWith(s);
+  }
+}, true);
+function agentChip(a) {
+  const name = a?.name || 'agent', color = a?.color || '#9be564';
+  return `<span class="achip" style="--ac:${esc(color)}">${toolIcon(a?.tool, name, color)}@${esc(name)}</span>`;
+}
+
+const fnBase = () => CFG.SUPABASE_URL.replace(/\/+$/, '') + '/functions/v1/';
+const readUrl = k => `${fnBase()}context?t=${k}`;
+const writeUrl = k => `${fnBase()}ingest?t=${k}`;
+const agentInstructions = (k, agentName, projName) => [
+  `Si agent »@${agentName}«. Ko končaš korak, naletiš na težavo ali sprejmeš odločitev, to zapiši v moj projekt »${projName}« z zahtevo POST na:`,
+  writeUrl(k),
+  `Telo (JSON): {"text": "kratek opis, kaj si naredil ali ugotovil", "kind": "misel"}`,
+  `kind: misel (zapisek), odlocitev (odločitev), todo (naloga), povezava (povezava), skill (navodila za AI, v Markdownu), prompt. En vnos na korak, kratko in po dejstvih, v slovenščini.`,
+  `Skille in prompte pred uporabo pregledam in odobrim. Skillu ali promptu daj kratko ime: {"kind": "skill", "name": "pisanje-clankov", "text": "..."}. Če pošlješ isto ime znova, nastane nova različica, ki po moji odobritvi nadomesti staro.`,
+  `Datoteke: dodaj "files": [{"name": "porocilo.pdf", "data": "<base64>"}] (ali multipart/form-data s polji text, kind in file). Dovoljeno: slike (png, jpg, gif, webp), pdf, csv, docx, xlsx, md, txt; največ 5 datotek po 8 MB. Datoteke .md in .txt se shranijo kot besedilo.`,
+  `Povezava lahko samo dodaja vnose (podpisane kot @${agentName}), ne more brati ali brisati.`,
+  `Primer: curl -X POST "${writeUrl(k)}" -H "Content-Type: application/json" -d '{"text":"Uvožena predloga Investment.","kind":"misel"}'`
+].join('\n');
+const readInstructions = k => `Preberi moj kontekst s te povezave (samo branje) in ga uporabi pri odgovorih: ${readUrl(k)}`;
+
+async function newKey() {
+  const b = crypto.getRandomValues(new Uint8Array(32));
+  const key = Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+  const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))), x => x.toString(16).padStart(2, '0')).join('');
+  return { key, hash: h, hint: key.slice(-4) };
+}
+let agents = [], agLinks = [], legacy = [], shownKey = null;
+
+async function loadAgentsPanel() {
+  const p = P(); if (!p) return;
+  $('#shProj').textContent = p.name; $('#shSpace').textContent = p.space;
+  const [{ data: ag, error: e1 }, { data: ls, error: e2 }] = await Promise.all([
+    sb.from('agents').select('id,name,space,color,tool,note,shared,disabled,created_at').order('created_at'),
+    sb.from('share_links').select('id,agent_id,project_id,space,mode,label,token_hint,created_at,expires_at,revoked,last_used_at,use_count')
+      .eq('revoked', false).or(`project_id.eq.${p.id},space.eq.${p.space}`).order('created_at', { ascending: false }),
+  ]);
+  if (e1 || e2) return fail('agenti', e1 || e2);
+  agents = ag || []; agLinks = (ls || []).filter(l => l.agent_id); legacy = (ls || []).filter(l => !l.agent_id);
+  renderAgents();
+}
+function linkRow(l, a) {
+  const p = P(), w = l.mode === 'write', expired = l.expires_at && new Date(l.expires_at) < new Date();
+  const scope = w ? `piše v »${esc(p.name)}«` : l.project_id ? `bere »${esc(p.name)}«` : `bere ves prostor ${esc(l.space)}`;
+  const d = document.createElement('div'); d.className = 'lrow';
+  d.innerHTML = `<span class="mode${w ? ' w' : ''}">${w ? 'PIŠE' : 'BERE'}</span><span>${scope}</span>
+    <span class="muted">…${esc(l.token_hint || '????')} · ${l.expires_at ? (expired ? '<b style="color:var(--red)">potekla</b>' : 'do ' + stamp(l.expires_at).slice(0, 10)) : 'brez roka'} · uporabljena ${esc(ago(l.last_used_at))}${l.use_count ? ` (${l.use_count}×)` : ''}</span>
+    <span class="spacer"></span>${a ? `<button class="ghost" type="button" data-renew>${ico('key')}Obnovi</button>` : ''}<button class="ghost danger" type="button" data-rev>${ico('trash')}Prekliči</button>`;
+  if (a) d.querySelector('[data-renew]').onclick = () => createLink(a, l.mode, l.project_id ? 'project' : 'space', l);
+  confirmBtn(d.querySelector('[data-rev]'), 'Res prekliči?', async () => {
+    const { error } = await sb.from('share_links').update({ revoked: true }).eq('id', l.id);
+    if (error) return fail('preklic', error);
+    toast('povezava preklicana'); loadAgentsPanel();
+  });
+  return d;
+}
+function renderAgents() {
+  const p = P(), box = $('#agentList'); box.innerHTML = '';
+  if (!agents.length) box.innerHTML = '<div class="muted">Še ni agentov. Ustvari prvega spodaj.</div>';
+  agents.forEach(a => {
+    const c = document.createElement('div'); c.className = 'agcard' + (a.disabled ? ' off' : ''); c.style.setProperty('--ac', a.color);
+    const fits = a.space === p.space && !a.disabled;
+    c.innerHTML = `<div class="top">${agentChip(a)}<span class="badge">${esc(a.space)}</span>${a.shared ? '<span class="badge">deljen račun</span>' : ''}${a.disabled ? '<span class="badge blk">onemogočen</span>' : ''}${a.tool ? `<span class="muted">${esc(toolLabel(a.tool))}</span>` : ''}<span class="spacer"></span>
+        <button class="ghost" type="button" data-edit>${ico('edit')}Uredi</button><button class="ghost${a.disabled ? '' : ' danger'}" type="button" data-dis>${ico(a.disabled ? 'key' : 'lock')}${a.disabled ? 'Omogoči' : 'Onemogoči'}</button></div>
+      ${a.note ? `<div class="muted">${esc(a.note)}</div>` : ''}
+      <div class="links"></div>
+      ${fits ? `<div class="mk"><button class="btn sm" type="button" data-mk="write">${ico('plus')}Pisanje v ta projekt</button><button class="btn sm" type="button" data-mk="read">${ico('plus')}Branje projekta</button><button class="btn sm" type="button" data-mk="space">${ico('plus')}Branje celega prostora ${esc(a.space)}</button></div>`
+        : `<div class="muted">${a.disabled ? 'Onemogočen agent ne more dobiti povezav.' : `Ta agent je v prostoru »${esc(a.space)}«, projekt pa v »${esc(p.space)}«, zato mu ga ni mogoče deliti.`}</div>`}`;
+    const lbox = c.querySelector('.links');
+    agLinks.filter(l => l.agent_id === a.id).forEach(l => lbox.append(linkRow(l, a)));
+    c.querySelectorAll('[data-mk]').forEach(b => b.onclick = () => createLink(a, b.dataset.mk === 'write' ? 'write' : 'read', b.dataset.mk === 'space' ? 'space' : 'project'));
+    c.querySelector('[data-dis]').onclick = async () => {
+      const { error } = await sb.from('agents').update({ disabled: !a.disabled }).eq('id', a.id);
+      if (error) return fail('agent', error);
+      toast(a.disabled ? '@' + a.name + ' spet deluje' : '@' + a.name + ' onemogočen, vse njegove povezave ne delujejo'); loadAgentsPanel();
+    };
+    c.querySelector('[data-edit]').onclick = () => {
+      if (c.querySelector('.agedit')) { c.querySelector('.agedit').remove(); return; }
+      const ed = document.createElement('form'); ed.className = 'agedit';
+      ed.innerHTML = `<div class="sub-l">UREDI @${esc(a.name)} (ime in prostor ostaneta)</div><select data-tool aria-label="Orodje"></select><input data-domain placeholder="spletna stran orodja" hidden><div class="colors" data-colors></div>
+        <label class="checks"><input type="checkbox" data-shared ${a.shared ? 'checked' : ''}>deljen službeni račun</label><input data-note class="lblin" maxlength="120" placeholder="opomba" value="${esc(a.note || '')}"><button class="btn sm primary" type="submit">Shrani</button>`;
+      const st = toolPicker(ed.querySelector('[data-tool]'), ed.querySelector('[data-domain]'), a.tool);
+      const sc = colorPicker(ed.querySelector('[data-colors]'), a.color);
+      ed.onsubmit = async ev => {
+        ev.preventDefault();
+        const { error } = await sb.from('agents').update({ tool: st(), color: sc(), shared: ed.querySelector('[data-shared]').checked, note: ed.querySelector('[data-note]').value.trim() || null }).eq('id', a.id);
+        if (error) return fail('agent', error);
+        toast('@' + a.name + ' shranjen'); loadAgentsPanel();
+      };
+      c.append(ed);
+    };
+    box.append(c);
+  });
+  const lb = $('#legacyList'); lb.innerHTML = ''; $('#legacyH').hidden = !legacy.length;
+  legacy.forEach(l => lb.append(linkRow(l, null)));
+}
+async function createLink(a, mode, scope, replacing) {
+  const p = P(); if (!p) return;
+  const k = await newKey(), days = +$('#shareExp').value;
+  const row = { created_by: me.id, agent_id: a.id, label: a.name, mode, token: 'h:' + k.hash, token_hash: k.hash, token_hint: k.hint,
+    expires_at: new Date(Date.now() + days * 864e5).toISOString() };
+  if (scope === 'space') row.space = a.space; else row.project_id = p.id;
+  const { error } = await sb.from('share_links').insert(row);
+  if (error) return fail('nova povezava', error);
+  if (replacing) await sb.from('share_links').update({ revoked: true }).eq('id', replacing.id);
+  shownKey = { key: k.key, mode, agent: a.name, proj: p.name };
+  $('#newKeyUrl').textContent = mode === 'write' ? writeUrl(k.key) : readUrl(k.key);
+  $('#newKey').hidden = false; $('#newKey').scrollIntoView({ block: 'nearest' });
+  toast(replacing ? 'povezava obnovljena, stara ne deluje več' : 'povezava ustvarjena');
+  loadAgentsPanel();
+}
+$('#newKeyCopy').onclick = () => shownKey && copyText(shownKey.mode === 'write' ? writeUrl(shownKey.key) : readUrl(shownKey.key), 'povezava kopirana');
+$('#newKeyCopyInstr').onclick = () => shownKey && copyText(shownKey.mode === 'write' ? agentInstructions(shownKey.key, shownKey.agent, shownKey.proj) : readInstructions(shownKey.key), 'kopirano z navodilom');
+$('#newKeyHide').onclick = () => { $('#newKey').hidden = true; shownKey = null; $('#newKeyUrl').textContent = ''; };
+
+function toolPicker(sel, dom, current) {
+  sel.innerHTML = `<option value="">brez ikone</option>${Object.entries(TOOLS).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('')}<option value="__domain">drugo (spletna stran)…</option>`;
+  if (current?.startsWith('domain:')) { sel.value = '__domain'; dom.value = current.slice(7); dom.hidden = false; }
+  else sel.value = current || '';
+  sel.onchange = () => { dom.hidden = sel.value !== '__domain'; if (!dom.hidden) dom.focus(); };
+  return () => sel.value === '__domain' ? (dom.value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '') ? 'domain:' + dom.value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase() : null) : (sel.value || null);
+}
+function colorPicker(box, current) {
+  let val = current || COLORS[0];
+  const draw = () => {
+    box.innerHTML = COLORS.map(c => `<button type="button" style="--sw:${c}" aria-label="Barva ${c}" aria-pressed="${c.toLowerCase() === val.toLowerCase()}" data-c="${c}"></button>`).join('') + `<input type="color" value="${val}" aria-label="Poljubna barva">`;
+    box.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { val = b.dataset.c; draw(); });
+    box.querySelector('input').oninput = e => { val = e.target.value; box.querySelectorAll('[data-c]').forEach(b => b.setAttribute('aria-pressed', 'false')); };
+  };
+  draw(); return () => val;
+}
+let agToolGet = null, agColorGet = null;
+$('#shareBtn').onclick = () => {
+  $('#agentList').innerHTML = '<div class="loading">&gt; nalagam…</div>'; $('#newKey').hidden = true; shownKey = null;
+  agToolGet = toolPicker($('#agTool'), $('#agDomain'), null); agColorGet = colorPicker($('#agColors'), COLORS[0]);
+  $('#agSpace').value = P()?.space || 'delo';
+  openSheet('#shareSheet'); loadAgentsPanel();
+};
+$('#agentForm').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const name = $('#agName').value.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{1,29}$/.test(name)) { $('#agErr').textContent = 'Ime: 2–30 znakov, male črke, številke, . _ -'; return; }
+  const { data: taken } = await sb.rpc('name_taken', { n: name });
+  if (taken) { $('#agErr').textContent = 'To ime je že zasedeno (agent ali oseba).'; return; }
+  const { error } = await sb.from('agents').insert({ name, space: $('#agSpace').value, color: agColorGet(), tool: agToolGet(), shared: $('#agShared').checked, note: $('#agNote').value.trim() || null, created_by: me.id });
+  if (error) { $('#agErr').textContent = /duplicate|unique/i.test(error.message) ? 'To ime je že zasedeno.' : error.message; return; }
+  $('#agErr').textContent = ''; $('#agName').value = ''; $('#agNote').value = ''; $('#agShared').checked = false; $('#newAgentBox').open = false;
+  toast('agent @' + name + ' ustvarjen'); loadAgentsPanel();
+});
 
 /* ---------------- refresh when coming back to the tab ---------------- */
 addEventListener('focus', async () => {

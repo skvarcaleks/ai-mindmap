@@ -11,6 +11,8 @@ config.js       your Supabase address and public key  ← you edit this
 supabase/
   schema.sql                     database, security rules, file storage
   functions/admin-users/index.ts server function for creating users / passwords
+  functions/context/index.ts     read links for AI tools
+  functions/ingest/index.ts      write links for agents
 ```
 
 Setup takes about 20 minutes, once.
@@ -90,6 +92,41 @@ Log in with `aleks` and your password.
 - **Your data is permanent.** Notes and files stay in Supabase until someone deletes them. Only the temporary viewing links for files expire (6 hours in the app, 7 days in the AI export); the files themselves never do.
 - **Dictation** works in Chrome, Edge and Safari. The browser asks for microphone access the first time.
 - **Kontekst za umetno inteligenco** copies the whole project as text for any AI chat.
+
+## Work and personal spaces
+
+Every project is in **delo** (work) or **osebno** (personal). Choose it when you create a project; as admin, change it with **Preimenuj**. The filter above the project list shows all, work only or personal only.
+
+## Skills and prompts
+
+Entry types **skill** and **prompt** hold AI instructions. Attaching a `.md` or `.txt` file puts its text into the entry (so it is searchable and AI-readable) instead of storing it as a file. Skills show formatted, with **Kopiraj** and **Prenesi .md** buttons.
+
+## Sharing with work AI tools (no connector needed)
+
+**Deli z AI** (admin) creates a secret read-only link for one project or a whole space. Paste it into any AI that can open links:
+*"Preberi moj kontekst s te povezave: https://…/functions/v1/context?t=…"*. The AI sees only that project or space, can't change anything, and you can revoke the link any time.
+
+This uses a second Edge Function, `context` (`supabase/functions/context/index.ts`), deployed with **Verify JWT turned off**, because the secret token in the link is the access check.
+
+## To-dos
+
+Tick the box next to a to-do to mark it done (anyone with access to the project can). **skrij opravljene** hides finished ones. Exports show `[x]` / `[ ]`.
+
+## Agents (AI tools) and their links
+
+Sidebar → project → **Agenti**.
+
+- **An agent** is a permanent, reserved name for an AI tool: `@claude`, `@grok`, `@barabin`, `@claude-delo`. No person and no other agent can ever take that name. Each agent has a **space** (delo or osebno), a **color**, an optional **tool icon** (the tool's own website icon) and can be marked as a **shared work account**.
+- **Links** belong to an agent: *Pisanje v ta projekt* (write-only), *Branje projekta*, *Branje celega prostora*. Whatever comes through a link is signed with the agent's name; the agent can't choose its own name.
+- **Work agents** (space delo) can only get links to delo projects, and this is checked on every use. Moving a project to osebno immediately cuts every work link to it.
+- **Links are shown once.** Only a SHA-256 fingerprint is stored, so nobody, not even with database access, can read a working link back. Lost it? **Obnovi** creates a new one and kills the old one; the agent keeps its name and history.
+- Links expire (30 / 90 days / 1 year). **Onemogoči** on an agent stops all its links at once.
+- Write links: one project, add-only, max 60 entries + files per hour, 20,000 characters per entry.
+- **Skills, prompts and files through write links.** An agent can send `"kind": "skill"` or `"prompt"`, and attach files (`"files": [{"name": "x.pdf", "data": "<base64>"}]` or multipart/form-data). Allowed: png, jpg, gif, webp, pdf, csv, docx, xlsx, md, txt; up to 5 files of 8 MB each. `.md` and `.txt` files are turned into text. Anything else (programs, web pages, archives) is refused.
+- **Review step.** Skills and prompts written by agents arrive marked **ZA PREGLED**. Until you click **Odobri** they are left out of every read link and the AI export; **Zavrni** deletes them. Only admins can approve.
+- **Versions.** A skill or prompt with a name (`"name": "pisanje-clankov"`, or the `name:` line in a SKILL.md header) is versioned per agent and project. Sending the same name again arrives as **v2, v3…**, marked for review. **Odobri** makes it the current version; the older ones fold under **Prejšnje različice** with Kopiraj / Prenesi .md. AI tools only ever see the current approved version. **Zavrni** deletes the proposal and leaves the current one untouched. Deleting the current version brings back the previous one.
+- In the log, people show as 👤 **@name**; agents as their colored **@name** with icon and an **AGENT** tag; text you pasted from an AI as **@you · prek ChatGPT** (use **Prilepi iz AI** and the source dropdown). On the star chart, agent entries are hollow squares.
+- Direct database access (Claude's Supabase connector) writes through `select add_entry_as('claude', '<project id>', 'text', 'misel');`. For a named, versioned skill: `select add_entry_as('claude', '<project id>', 'text', 'skill', 'ime-skilla');`. This is a convention, not a lock, so use the Supabase connector only on your personal Claude. Work tools get links.
 
 ## Letting Claude read the mindmap directly
 
